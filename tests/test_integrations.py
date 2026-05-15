@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from common.models import ProcessInfo, WindowInfo
-from integrations.coordinator import IntegrationCoordinator
+from controllers.integration_coordinator import IntegrationCoordinator
 from integrations.terminals.base import detect_terminal
 from integrations.terminals.shell_files import (
     SHELLS_DIR, read_shell_cwds, shell_integration_dir_path,

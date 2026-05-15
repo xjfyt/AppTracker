@@ -14,7 +14,7 @@ from typing import Optional
 import psutil
 from PySide6.QtCore import QThread, Signal
 
-from monitors.base import WindowMonitor
+from controllers.window_monitor.base import WindowMonitor
 from common.models import (
     DocumentSource,
     ProcessInfo,

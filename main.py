@@ -24,12 +24,12 @@ from PySide6.QtWidgets import QApplication
 
 import qasync
 
-from activity.activity_monitor import ActivityMonitor
-from browser.bridge import BrowserBridge
-from capture.screen_capture import ScreenCapture
+from controllers.activity_monitor import ActivityMonitor
+from controllers.browser_bridge import BrowserBridge
+from controllers.screen_capture import ScreenCapture
 from common.signals import bus
-from integrations.coordinator import IntegrationCoordinator
-from monitors import create_monitor
+from controllers.integration_coordinator import IntegrationCoordinator
+from controllers.window_monitor import create_monitor
 from ui.main_window import MainWindow
 
 LOG_DIR = Path.home() / ".active_tracker"
