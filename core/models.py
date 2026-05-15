@@ -50,6 +50,39 @@ class BrowserTab:
 
 
 @dataclass
+class FileManagerWindow:
+    folder: str
+    selected_items: list[str] = field(default_factory=list)
+    hwnd_or_id: Optional[str] = None
+    is_active: bool = False
+
+
+@dataclass
+class FileManagerState:
+    source: str            # finder_applescript | explorer_com | nautilus_* | dolphin_dbus | title_parse
+    windows: list[FileManagerWindow] = field(default_factory=list)
+
+
+@dataclass
+class TerminalProcess:
+    pid: int
+    name: str              # bash / zsh / python / node ...
+    cwd: Optional[str] = None
+    cmdline: list[str] = field(default_factory=list)   # 已脱敏
+    cmdline_redacted: bool = False
+    create_time: Optional[float] = None
+    is_shell: bool = False
+    cwd_source: str = "psutil"   # psutil | shell_file
+
+
+@dataclass
+class TerminalContext:
+    source: str            # process_tree | iterm2_api
+    shells: list[TerminalProcess] = field(default_factory=list)
+    running: list[TerminalProcess] = field(default_factory=list)
+
+
+@dataclass
 class WindowInfo:
     timestamp: float = field(default_factory=time.time)
     platform: str = ""
@@ -62,6 +95,8 @@ class WindowInfo:
     process: Optional[ProcessInfo] = None
     document_paths: list[DocumentSource] = field(default_factory=list)
     browser_tab: Optional[BrowserTab] = None
+    file_manager_state: Optional[FileManagerState] = None
+    terminal_context: Optional[TerminalContext] = None
     extra: dict = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
