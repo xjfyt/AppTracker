@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from core.models import DocumentSource, WindowInfo
+from common.models import DocumentSource, WindowInfo
 
 KIND_ICON = {"file": "📄", "folder": "📁", "url": "🌐", "unknown": "❓"}
 

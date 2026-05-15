@@ -1,4 +1,4 @@
-from core.models import (
+from common.models import (
     ActivityStats, BrowserTab, DocumentSource, ProcessInfo,
     WindowGeometry, WindowInfo,
 )

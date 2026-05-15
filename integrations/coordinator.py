@@ -24,8 +24,8 @@ from typing import Optional
 
 from PySide6.QtCore import QObject
 
-from core.models import WindowInfo
-from core.signals import bus
+from common.models import WindowInfo
+from common.signals import bus
 from integrations.file_managers.base import FileManagerIntegration
 from integrations.terminals.base import TerminalIntegration
 

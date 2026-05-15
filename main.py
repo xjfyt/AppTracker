@@ -27,7 +27,7 @@ import qasync
 from activity.activity_monitor import ActivityMonitor
 from browser.bridge import BrowserBridge
 from capture.screen_capture import ScreenCapture
-from core.signals import bus
+from common.signals import bus
 from integrations.coordinator import IntegrationCoordinator
 from monitors import create_monitor
 from ui.main_window import MainWindow

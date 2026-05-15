@@ -20,8 +20,8 @@ from PIL import Image
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QImage
 
-from core.models import WindowInfo
-from core.signals import bus
+from common.models import WindowInfo
+from common.signals import bus
 
 log = logging.getLogger(__name__)
 

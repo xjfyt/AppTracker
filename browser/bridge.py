@@ -11,8 +11,8 @@ from pathlib import Path
 import websockets
 from PySide6.QtCore import QObject
 
-from core.models import BrowserTab
-from core.signals import bus
+from common.models import BrowserTab
+from common.signals import bus
 
 log = logging.getLogger(__name__)
 

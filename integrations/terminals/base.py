@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from core.models import TerminalContext, WindowInfo
+from common.models import TerminalContext, WindowInfo
 
 
 # bundle_id / exe basename / window_class → 终端类型 key

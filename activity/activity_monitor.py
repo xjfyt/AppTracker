@@ -11,8 +11,8 @@ from collections import deque
 
 from PySide6.QtCore import QObject, QTimer
 
-from core.models import ActivityStats
-from core.signals import bus
+from common.models import ActivityStats
+from common.signals import bus
 
 log = logging.getLogger(__name__)
 

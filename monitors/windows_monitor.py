@@ -18,13 +18,13 @@ import win32process
 from PySide6.QtCore import QThread, Signal
 
 from monitors.base import WindowMonitor
-from core.models import (
+from common.models import (
     DocumentSource,
     ProcessInfo,
     WindowGeometry,
     WindowInfo,
 )
-from core.utils import (
+from common.utils import (
     classify_path,
     dedupe_documents,
     extract_paths_from_title,

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from core.models import TerminalContext, TerminalProcess
+from common.models import TerminalContext, TerminalProcess
 from integrations.terminals.shell_files import shell_integration_dir_path
 
 

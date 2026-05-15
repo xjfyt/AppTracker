@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from core.models import FileManagerState, FileManagerWindow
+from common.models import FileManagerState, FileManagerWindow
 
 
 class FileManagerCard(QFrame):

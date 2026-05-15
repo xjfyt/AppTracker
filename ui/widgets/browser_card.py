@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout
 
-from core.models import BrowserTab
+from common.models import BrowserTab
 
 BROWSER_GLYPH = {
     "chrome": "🟢", "edge": "🔵", "firefox": "🦊", "brave": "🦁",

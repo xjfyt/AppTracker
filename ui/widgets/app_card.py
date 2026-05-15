@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QGridLayout
 
-from core.models import WindowInfo
+from common.models import WindowInfo
 
 
 class AppCard(QFrame):

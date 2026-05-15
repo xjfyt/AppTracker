@@ -6,7 +6,7 @@ import logging
 
 from PySide6.QtCore import QObject, QTimer
 
-from core.models import WindowInfo
+from common.models import WindowInfo
 
 log = logging.getLogger(__name__)
 

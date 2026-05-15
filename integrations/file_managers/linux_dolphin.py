@@ -13,7 +13,7 @@ from typing import Optional
 
 import psutil
 
-from core.models import FileManagerState, FileManagerWindow, WindowInfo
+from common.models import FileManagerState, FileManagerWindow, WindowInfo
 from integrations.file_managers.base import FileManagerIntegration
 
 log = logging.getLogger(__name__)

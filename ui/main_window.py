@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (
     QSplitter, QVBoxLayout, QWidget,
 )
 
-from core.models import ActivityStats, BrowserTab, WindowInfo
-from core.signals import bus
+from common.models import ActivityStats, BrowserTab, WindowInfo
+from common.signals import bus
 from ui.widgets.activity_card import ActivityCard
 from ui.widgets.app_card import AppCard
 from ui.widgets.browser_card import BrowserCard

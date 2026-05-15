@@ -9,7 +9,7 @@ from typing import Optional
 
 import psutil
 
-from core.models import TerminalContext, TerminalProcess, WindowInfo
+from common.models import TerminalContext, TerminalProcess, WindowInfo
 from integrations.redaction import redact_cmdline
 from integrations.terminals.base import TerminalIntegration, detect_terminal
 from integrations.terminals.shell_files import read_shell_cwds

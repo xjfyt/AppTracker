@@ -1,7 +1,7 @@
 import os
 
-from core.models import DocumentSource
-from core.utils import (
+from common.models import DocumentSource
+from common.utils import (
     SHELL_PROCESS_NAMES, classify_path, dedupe_documents, expand_user,
     extract_paths_from_title, file_url_to_path, find_shell_cwd,
     is_interesting_path, looks_like_browser, looks_like_terminal,

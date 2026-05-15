@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from core.models import ProcessInfo, WindowInfo
+from common.models import ProcessInfo, WindowInfo
 from integrations.coordinator import IntegrationCoordinator
 from integrations.terminals.base import detect_terminal
 from integrations.terminals.shell_files import (
@@ -94,7 +94,7 @@ def test_read_shell_cwds_cleans_dead_pid(tmp_path, monkeypatch):
 
 def test_coordinator_skips_already_enriched():
     """已带 file_manager_state 的 emit 不应触发再次 enrich（防循环）。"""
-    from core.models import FileManagerState
+    from common.models import FileManagerState
     c = IntegrationCoordinator()
     info = _make_info()
     info.file_manager_state = FileManagerState(source="test")

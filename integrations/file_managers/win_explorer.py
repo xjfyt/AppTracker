@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from urllib.parse import unquote, urlparse
 
-from core.models import FileManagerState, FileManagerWindow, WindowInfo
+from common.models import FileManagerState, FileManagerWindow, WindowInfo
 from integrations.file_managers.base import FileManagerIntegration
 
 log = logging.getLogger(__name__)

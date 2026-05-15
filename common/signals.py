@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage
 
-from core.models import ActivityStats, BrowserTab, WindowInfo
+from common.models import ActivityStats, BrowserTab, WindowInfo
 
 
 class SignalBus(QObject):
