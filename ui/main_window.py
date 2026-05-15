@@ -19,7 +19,9 @@ from ui.widgets.app_card import AppCard
 from ui.widgets.browser_card import BrowserCard
 from ui.widgets.document_list import DocumentList
 from ui.widgets.error_log import ErrorLog
+from ui.widgets.file_manager_card import FileManagerCard
 from ui.widgets.screenshot_view import ScreenshotView
+from ui.widgets.terminal_card import TerminalCard
 from ui.widgets.window_card import WindowCard
 
 log = logging.getLogger(__name__)
@@ -138,9 +140,15 @@ class MainWindow(QMainWindow):
         right_lay.setContentsMargins(7, 14, 14, 14)
         right_lay.setSpacing(14)
         self.browser_card = BrowserCard()
+        self.file_manager_card = FileManagerCard()
+        self.file_manager_card.setVisible(False)
+        self.terminal_card = TerminalCard()
+        self.terminal_card.setVisible(False)
         self.activity_card = ActivityCard()
         self.screenshot = ScreenshotView()
         right_lay.addWidget(self.browser_card)
+        right_lay.addWidget(self.file_manager_card)
+        right_lay.addWidget(self.terminal_card)
         right_lay.addWidget(self.activity_card)
         right_lay.addWidget(self.screenshot, 1)
 
@@ -176,6 +184,20 @@ class MainWindow(QMainWindow):
         self.app_card.update_from(info)
         self.window_card.update_from(info)
         self.doc_list.update_from(info)
+
+        # 集成结果：非空才显示对应卡片
+        if info.file_manager_state and info.file_manager_state.windows:
+            self.file_manager_card.update_from(info.file_manager_state)
+            self.file_manager_card.setVisible(True)
+        else:
+            self.file_manager_card.clear()
+            self.file_manager_card.setVisible(False)
+        if info.terminal_context and (info.terminal_context.shells or info.terminal_context.running):
+            self.terminal_card.update_from(info.terminal_context)
+            self.terminal_card.setVisible(True)
+        else:
+            self.terminal_card.clear()
+            self.terminal_card.setVisible(False)
 
     def _on_activity(self, stats: ActivityStats) -> None:
         self.activity_card.update_from(stats)

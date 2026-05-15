@@ -28,6 +28,7 @@ from activity.activity_monitor import ActivityMonitor
 from browser.bridge import BrowserBridge
 from capture.screen_capture import ScreenCapture
 from core.signals import bus
+from integrations.coordinator import IntegrationCoordinator
 from monitors import create_monitor
 from ui.main_window import MainWindow
 
@@ -115,7 +116,10 @@ def main() -> None:
     if not args.no_browser_bridge:
         bridge = BrowserBridge()
 
-    # 5. 主窗口
+    # 5. 集成调度器（文件管理器 + 终端）
+    coordinator = IntegrationCoordinator()
+
+    # 6. 主窗口
     window = MainWindow(monitor=monitor)
     window.show()
 

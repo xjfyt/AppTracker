@@ -24,6 +24,8 @@
 - **跨平台**：Windows 10/11 · macOS 13+ · Linux X11
 - **事件驱动**：NSWorkspace 通知 / SetWinEventHook / X PropertyNotify — 切换应用 < 200 ms 内更新
 - **多策略文档路径**：辅助功能 API → AppleScript → 标题正则 → 进程句柄扫描，自动去重保留最高置信度
+- **文件管理器深度集成**：Finder / Explorer 拿所有窗口的当前目录 + 选中项；Linux 文件管理器尽力而为
+- **终端深度集成**：列出每个终端进程下的所有 shell（含真实 pwd）和正在运行的子进程，cmdline 自动脱敏
 - **浏览器扩展**：Chrome / Edge / Brave / Arc / Firefox 同一份 MV3 扩展，通过 WebSocket + token 推送当前 tab
 - **活动聚合**：每秒输出按键 / 点击 / 滚动 / 鼠标距离 / 空闲时间，60 s 滑动窗口；**不记录任何按键值**
 - **焦点窗口截图**：mss 抓取 + 缩略图，密码管理器自动屏蔽，不写盘
@@ -69,13 +71,61 @@ uv run main.py --debug
 │   └── screen_capture.py        # mss → Pillow → QImage，黑名单过滤
 ├── browser/
 │   └── bridge.py                # WebSocket 服务端 + token 鉴权
+├── integrations/                # 深度集成：异步、二段 emit、可独立测试
+│   ├── coordinator.py           # 监听 window_changed → 异步 enrich → 再次 emit
+│   ├── redaction.py             # 命令行脱敏
+│   ├── file_managers/           # Finder · Explorer · Nautilus · Dolphin
+│   └── terminals/               # 通用 process_tree + shell 集成脚本读取
 ├── ui/
 │   ├── main_window.py           # MainWindow：顶栏 / 双栏 splitter / 错误日志
-│   ├── widgets/                 # 6 个卡片 widget
+│   ├── widgets/                 # 8 个卡片 widget（含 FileManagerCard + TerminalCard）
 │   └── style.qss                # 深色主题
 ├── browser_extension/           # Chromium / Firefox MV3 扩展
+├── shell_integration/           # 可选 Tier 2：bash / zsh / fish / pwsh 集成脚本
 └── tests/                       # 单元测试
 ```
+
+## 深度集成（文件管理器 / 终端）
+
+`integrations/` 模块在窗口监视器之上做异步丰富，命中后再次 emit `window_changed`，
+UI 会在主信息出现后约 100–500 ms 内补充展示对应卡片。
+
+### 文件管理器
+
+| 平台    | 实现                                  | 拿得到 |
+|---------|-------------------------------------|--------|
+| macOS   | AppleScript 一次枚举所有 Finder 窗口 | 每个窗口的目录 + active 窗口的选中项 |
+| Windows | Shell COM (`Shell.Application.Windows()`) | 所有 Explorer 窗口的目录 + 选中项（Win11 tab 仅 active 可见） |
+| Linux   | psutil cwd + 标题解析（best-effort） | 单个窗口的目录；选中项基本拿不到 |
+
+macOS 首次使用会触发系统 "允许 Active Tracker 控制 Finder" 对话框（**自动化权限**，
+和辅助功能权限是两个开关，分别授权）。
+
+### 终端
+
+通用 `process_tree` 方案：递归遍历终端进程子孙，分两组列出 —
+
+- **Shells**：bash / zsh / fish / pwsh / cmd 等，附带真实 `pwd`
+- **Running**：当前被 shell 启动的非 shell 进程（编辑器、构建命令、脚本…），cmdline 自动脱敏
+
+#### Shell 集成脚本（可选 Tier 2）
+
+裸方案的 cwd 来自 `psutil.Process.cwd()`，在 tmux / screen / 嵌套 shell 下会不准。
+可选安装 [`shell_integration/`](shell_integration/) 下的脚本（bash / zsh / fish / pwsh），
+每次 prompt 把 `$PWD` 写入 `~/.active_tracker/shells/PID.cwd` 文件（权限 0600，
+只写当前目录，不写命令）。主程序检测到后会优先用文件里的 cwd，UI 会显示 `shell-file` chip。
+
+主窗口顶栏 **Shell 脚本目录** 按钮一键复制路径，方便在 rc 文件里 source。
+
+### Cmdline 脱敏
+
+所有终端的 cmdline 都经过 [`integrations/redaction.py`](integrations/redaction.py) 后才显示，
+识别并 redact：
+
+- `--password=xxx` / `--token xxx` / `--api-key xxx` 等敏感 flag 的值
+- 值本身像 AWS access key（`AKIA*`）、GitHub PAT（`ghp_*`）、Anthropic/OpenAI key（`sk-*`）、长 hex / 长 base64
+
+被 redact 过的行右侧显示 ⚠ redacted chip。
 
 ## 架构与数据流
 
