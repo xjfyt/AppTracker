@@ -125,3 +125,75 @@ BROWSER_EXECUTABLE_HINTS = (
 def looks_like_browser(executable: Optional[str], app_name: Optional[str]) -> bool:
     haystacks = [s.lower() for s in (executable, app_name) if s]
     return any(any(h in s for h in BROWSER_EXECUTABLE_HINTS) for s in haystacks)
+
+
+# --- 终端识别 + 真实 shell pwd 提取 ---------------------------------------
+
+TERMINAL_EXECUTABLE_HINTS = (
+    # macOS
+    "Terminal", "iTerm", "Alacritty", "WezTerm", "kitty", "Ghostty",
+    "Hyper", "Warp", "Tabby",
+    # Windows
+    "WindowsTerminal", "wt.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
+    "conhost.exe", "ConEmu", "mintty", "putty.exe",
+    # Linux
+    "gnome-terminal", "konsole", "xterm", "tilix", "terminator",
+    "wezterm-gui", "urxvt", "tmux",
+)
+
+# 进程名匹配（不含路径），全部小写比较
+SHELL_PROCESS_NAMES = {
+    "bash", "zsh", "fish", "ksh", "tcsh", "csh", "sh", "dash", "ash",
+    "nu", "nush", "xonsh", "elvish",
+    "pwsh", "powershell", "powershell.exe", "pwsh.exe",
+    "cmd", "cmd.exe",
+}
+
+
+def looks_like_terminal(executable: Optional[str], app_name: Optional[str]) -> bool:
+    haystacks = [s for s in (executable, app_name) if s]
+    needles = [h.lower() for h in TERMINAL_EXECUTABLE_HINTS]
+    for s in haystacks:
+        sl = s.lower()
+        if any(n in sl for n in needles):
+            return True
+    return False
+
+
+def find_shell_cwd(pid: int) -> Optional[str]:
+    """递归查找 pid 的 shell 后代进程，返回最新启动的那个的 cwd。
+
+    覆盖大多数 "用户在终端里 cd 切目录" 的场景。多 tab/分屏时返回
+    "最近启动的 shell"，对单 tab 场景准确；多 tab 时是近似值。
+
+    任何异常都返回 None — 调用方据此降级使用 process.cwd()。
+    """
+    import psutil
+    try:
+        proc = psutil.Process(pid)
+        children = proc.children(recursive=True)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+    shells = []
+    for c in children:
+        try:
+            name = (c.name() or "").lower()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        if name in SHELL_PROCESS_NAMES:
+            try:
+                shells.append((c.create_time(), c))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    if not shells:
+        return None
+    shells.sort(key=lambda t: t[0], reverse=True)
+    for _, c in shells:
+        try:
+            cwd = c.cwd()
+            if cwd:
+                return cwd
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return None

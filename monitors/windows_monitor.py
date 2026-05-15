@@ -28,7 +28,9 @@ from core.utils import (
     classify_path,
     dedupe_documents,
     extract_paths_from_title,
+    find_shell_cwd,
     is_interesting_path,
+    looks_like_terminal,
 )
 
 log = logging.getLogger(__name__)
@@ -190,6 +192,10 @@ class WindowsMonitor(WindowMonitor):
         # AppUserModelID
         info.app_bundle_id = self._app_user_model_id(hwnd)
 
+        # Explorer：用 Shell COM 拿当前文件夹 + 选中项
+        if (info.window_class or "") == "CabinetWClass":
+            self._collect_explorer_shell(info, hwnd)
+
         # 文档路径
         if self._uia and pid:
             self._collect_via_uia(info, hwnd)
@@ -204,6 +210,19 @@ class WindowsMonitor(WindowMonitor):
                     source="cwd", confidence=0.3,
                 )
             )
+
+        # 终端 → 真实 shell pwd
+        exe_hint = info.process.executable if info.process else None
+        if pid and looks_like_terminal(exe_hint, info.app_name):
+            shell_cwd = find_shell_cwd(pid)
+            if shell_cwd:
+                info.document_paths.append(
+                    DocumentSource(
+                        path=shell_cwd, kind="folder",
+                        source="shell_pwd", confidence=0.8,
+                    )
+                )
+                info.extra["shell_cwd"] = shell_cwd
 
         info.document_paths = dedupe_documents(info.document_paths)
         return info
@@ -266,6 +285,71 @@ class WindowsMonitor(WindowMonitor):
             cwd=cwd, username=username, create_time=ctime,
             cpu_percent=cpu, memory_rss=rss,
         )
+
+    def _collect_explorer_shell(self, info: WindowInfo, hwnd: int) -> None:
+        """通过 Shell COM 拿 Windows 资源管理器当前文件夹 + 选中项。
+
+        覆盖 Explorer (CabinetWClass) 在 Win10/11 的典型场景。
+        """
+        try:
+            import pythoncom  # type: ignore
+            import win32com.client  # type: ignore
+        except Exception as exc:
+            info.errors.append(f"Shell COM import: {exc}")
+            return
+        try:
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        try:
+            shell = win32com.client.Dispatch("Shell.Application")
+            for win in shell.Windows():
+                try:
+                    if int(win.HWND) != int(hwnd):
+                        continue
+                    doc = win.Document
+                    try:
+                        folder = doc.Folder.Self.Path or ""
+                    except Exception:
+                        folder = ""
+                    if folder and os.path.isdir(folder):
+                        info.document_paths.append(
+                            DocumentSource(
+                                path=folder, kind="folder",
+                                source="shell_com", confidence=0.95,
+                            )
+                        )
+                    try:
+                        selected = doc.SelectedItems()
+                    except Exception:
+                        selected = []
+                    count = 0
+                    for item in selected:
+                        try:
+                            p = item.Path or ""
+                        except Exception:
+                            continue
+                        if not p or not os.path.exists(p):
+                            continue
+                        info.document_paths.append(
+                            DocumentSource(
+                                path=p, kind=classify_path(p),
+                                source="shell_com", confidence=0.95,
+                            )
+                        )
+                        count += 1
+                        if count >= 20:
+                            break
+                    return
+                except Exception:
+                    continue
+        except Exception as exc:
+            info.errors.append(f"Shell COM: {exc}")
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
     def _collect_via_uia(self, info: WindowInfo, hwnd: int) -> None:
         """UIA 树遍历放到线程池里跑，硬性 2s 超时。"""

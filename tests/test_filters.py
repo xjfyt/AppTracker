@@ -1,7 +1,10 @@
+import os
+
 from core.models import DocumentSource
 from core.utils import (
-    classify_path, dedupe_documents, expand_user, extract_paths_from_title,
-    file_url_to_path, is_interesting_path, looks_like_browser,
+    SHELL_PROCESS_NAMES, classify_path, dedupe_documents, expand_user,
+    extract_paths_from_title, file_url_to_path, find_shell_cwd,
+    is_interesting_path, looks_like_browser, looks_like_terminal,
 )
 
 
@@ -66,3 +69,32 @@ def test_looks_like_browser():
     assert looks_like_browser("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", None)
     assert looks_like_browser(None, "Firefox")
     assert not looks_like_browser("/usr/bin/python", "Terminal")
+
+
+def test_looks_like_terminal():
+    assert looks_like_terminal("/Applications/iTerm.app/Contents/MacOS/iTerm2", None)
+    assert looks_like_terminal(None, "Terminal")
+    assert looks_like_terminal("/opt/homebrew/bin/wezterm", "WezTerm")
+    assert looks_like_terminal(
+        "C:\\Program Files\\WindowsApps\\WindowsTerminal_x\\WindowsTerminal.exe", None
+    )
+    assert looks_like_terminal(None, "powershell.exe")
+    assert looks_like_terminal("/usr/bin/gnome-terminal-server", None)
+    assert not looks_like_terminal(
+        "/Applications/Visual Studio Code.app/Contents/MacOS/Electron", "Code"
+    )
+    assert not looks_like_terminal(None, None)
+
+
+def test_shell_process_names_covers_common_shells():
+    assert {"bash", "zsh", "fish", "pwsh", "cmd.exe"}.issubset(SHELL_PROCESS_NAMES)
+
+
+def test_find_shell_cwd_unknown_pid_returns_none():
+    assert find_shell_cwd(2**31 - 1) is None
+
+
+def test_find_shell_cwd_no_shell_children_returns_none():
+    # 当前 pytest 进程通常没有 shell 子进程
+    result = find_shell_cwd(os.getpid())
+    assert result is None or isinstance(result, str)

@@ -42,6 +42,13 @@ from ApplicationServices import (
     kAXValueCGSizeType,
 )
 
+from Quartz import (
+    CGWindowListCopyWindowInfo,
+    kCGWindowListOptionOnScreenOnly,
+    kCGWindowListExcludeDesktopElements,
+    kCGNullWindowID,
+)
+
 from monitors.base import WindowMonitor
 from core.models import (
     DocumentSource,
@@ -55,7 +62,9 @@ from core.utils import (
     expand_user,
     extract_paths_from_title,
     file_url_to_path,
+    find_shell_cwd,
     is_interesting_path,
+    looks_like_terminal,
 )
 
 log = logging.getLogger(__name__)
@@ -63,16 +72,28 @@ log = logging.getLogger(__name__)
 # 应用切换后内部窗口/标题变化的快轮询间隔
 FAST_POLL_INTERVAL_MS = 250
 
-# bundle_id → AppleScript（拿 URL 或路径用）
+# 单条 AppleScript 输出格式由 _maybe_run_applescript 按 bundle_id 分支解析。
+#  - Finder 输出 "folder|||sel1\nsel2\n..."（先文件夹再选中项，可能为空）
+#  - 浏览器输出 "URL\ttitle"
+FINDER_SCRIPT = '''
+tell application "Finder"
+  set folderPath to ""
+  try
+    set folderPath to POSIX path of (target of front window as alias)
+  end try
+  set selOutput to ""
+  try
+    set sel to selection as alias list
+    repeat with i in sel
+      set selOutput to selOutput & POSIX path of i & linefeed
+    end repeat
+  end try
+  return folderPath & "|||" & selOutput
+end tell
+'''
+
 APPLESCRIPT_BY_BUNDLE: dict[str, str] = {
-    "com.apple.finder": (
-        'tell application "Finder" to '
-        'try\n'
-        '  return POSIX path of (target of front window as alias)\n'
-        'on error\n'
-        '  return ""\n'
-        'end try'
-    ),
+    "com.apple.finder": FINDER_SCRIPT,
     "com.google.Chrome": (
         'tell application "Google Chrome"\n'
         '  if (count of windows) = 0 then return ""\n'
@@ -182,11 +203,17 @@ class MacOSMonitor(WindowMonitor):
         if pid:
             info.process = self._build_process_info(pid, exe_path or "")
 
-        # AX 部分
+        # 几何 — 优先用 CGWindowList，比 AX 更可靠（无需权限 + 自动过滤隐藏窗口）
+        if pid:
+            cg_geom = self._cg_window_geometry(pid)
+            if cg_geom is not None:
+                info.geometry = cg_geom
+
+        # AX 部分（标题/文档；几何仅在 CG 没拿到时回退）
         if self._ax_ok and pid:
             self._fill_from_ax(info, pid)
 
-        # AppleScript 兜底（仅当 AX 没拿到 document/URL 时再调用，节省成本）
+        # AppleScript 兜底
         if pid and info.app_bundle_id:
             self._maybe_run_applescript(info)
 
@@ -206,6 +233,18 @@ class MacOSMonitor(WindowMonitor):
                     source="cwd", confidence=0.3,
                 )
             )
+
+        # 终端 → 找真正的 shell pwd（不是终端进程的 cwd）
+        if pid and looks_like_terminal(exe_path, info.app_name):
+            shell_cwd = find_shell_cwd(pid)
+            if shell_cwd:
+                info.document_paths.append(
+                    DocumentSource(
+                        path=shell_cwd, kind="folder",
+                        source="shell_pwd", confidence=0.8,
+                    )
+                )
+                info.extra["shell_cwd"] = shell_cwd
 
         info.document_paths = dedupe_documents(info.document_paths)
         return info
@@ -294,10 +333,11 @@ class MacOSMonitor(WindowMonitor):
         if err == kAXErrorSuccess and role:
             info.extra["ax_role"] = str(role)
 
-        # 几何
-        geom = self._ax_geometry(focused)
-        if geom:
-            info.geometry = geom
+        # 几何 — 仅在 CGWindowList 没拿到时回退
+        if info.geometry is None:
+            geom = self._ax_geometry(focused)
+            if geom:
+                info.geometry = geom
 
         # AXDocument — 通常 "file:///..." 或纯路径
         err, doc = self._ax_copy(focused, kAXDocumentAttribute)
@@ -387,10 +427,62 @@ class MacOSMonitor(WindowMonitor):
             pass
         return 0
 
+    def _cg_window_geometry(self, pid: int) -> Optional[WindowGeometry]:
+        """通过 CGWindowList 拿目标进程的最上层可见窗口的真实 on-screen 几何。
+
+        比 AX 的 kAXPositionAttribute/kAXSizeAttribute 可靠，因为：
+          * 不需要 Accessibility 权限
+          * 隐藏/最小化/非屏幕上的窗口会被 onScreenOnly 自动过滤
+          * 返回的坐标已经是 CGDirectDisplay 全局坐标，和 mss 抓屏所用的 bbox 一致
+        """
+        try:
+            options = (
+                kCGWindowListOptionOnScreenOnly
+                | kCGWindowListExcludeDesktopElements
+            )
+            windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+        except Exception as exc:
+            log.debug("CGWindowList failed: %s", exc)
+            return None
+        if not windows:
+            return None
+
+        # CGWindowListCopyWindowInfo 返回顺序 = 前到后；选第一个 layer=0（normal app
+        # window）且尺寸合理的窗口。layer 非 0 通常是浮动面板/输入法等。
+        for w in windows:
+            if int(w.get("kCGWindowOwnerPID", -1)) != int(pid):
+                continue
+            if int(w.get("kCGWindowLayer", 0)) != 0:
+                continue
+            try:
+                alpha = float(w.get("kCGWindowAlpha", 1.0))
+            except (TypeError, ValueError):
+                alpha = 1.0
+            if alpha <= 0.0:
+                continue
+            bounds = w.get("kCGWindowBounds")
+            if not bounds:
+                continue
+            try:
+                x = int(round(float(bounds.get("X", 0))))
+                y = int(round(float(bounds.get("Y", 0))))
+                width = int(round(float(bounds.get("Width", 0))))
+                height = int(round(float(bounds.get("Height", 0))))
+            except (TypeError, ValueError):
+                continue
+            if width < 50 or height < 50:
+                continue
+            return WindowGeometry(
+                x=x, y=y, width=width, height=height,
+                screen_index=self._screen_index_for(x, y),
+            )
+        return None
+
     def _maybe_run_applescript(self, info: WindowInfo) -> None:
         if not self._osascript:
             return
-        script = APPLESCRIPT_BY_BUNDLE.get(info.app_bundle_id or "")
+        bundle = info.app_bundle_id or ""
+        script = APPLESCRIPT_BY_BUNDLE.get(bundle)
         if not script:
             return
         try:
@@ -399,20 +491,22 @@ class MacOSMonitor(WindowMonitor):
                 capture_output=True, timeout=1.0, text=True,
             )
         except subprocess.TimeoutExpired:
-            info.errors.append(f"AppleScript timeout: {info.app_bundle_id}")
+            info.errors.append(f"AppleScript timeout: {bundle}")
             return
         except Exception as exc:
             info.errors.append(f"AppleScript run failed: {exc}")
             return
         if res.returncode != 0:
             err = (res.stderr or "").strip().splitlines()[-1:] or [""]
-            info.errors.append(f"AppleScript {info.app_bundle_id}: {err[0]}")
+            info.errors.append(f"AppleScript {bundle}: {err[0]}")
             return
-        out = res.stdout.strip()
+        out = res.stdout.rstrip()
         if not out:
             return
-        # Finder 返回单行路径；浏览器返回 "url\ttitle"
-        if "\t" in out:
+
+        if bundle == "com.apple.finder":
+            self._parse_finder_output(info, out)
+        elif "\t" in out:
             url, _title = out.split("\t", 1)
             if url.startswith(("http://", "https://")):
                 info.document_paths.append(
@@ -421,13 +515,33 @@ class MacOSMonitor(WindowMonitor):
                         source="applescript", confidence=0.85,
                     )
                 )
-        else:
-            path = expand_user(out)
-            if os.path.exists(path):
+
+    @staticmethod
+    def _parse_finder_output(info: WindowInfo, out: str) -> None:
+        """Finder 脚本输出：'folder|||sel1\\nsel2\\n...'。"""
+        if "|||" not in out:
+            return
+        folder, sel_block = out.split("|||", 1)
+        folder = folder.strip()
+        if folder and os.path.isdir(folder):
+            info.document_paths.append(
+                DocumentSource(
+                    path=folder, kind="folder",
+                    source="applescript", confidence=0.9,
+                )
+            )
+        for line in sel_block.splitlines():
+            p = line.strip()
+            if not p:
+                continue
+            # 选中项可能以 "/" 结尾（文件夹），统一去除
+            normalized = p.rstrip("/") or "/"
+            if os.path.exists(normalized):
                 info.document_paths.append(
                     DocumentSource(
-                        path=path, kind=classify_path(path),
-                        source="applescript", confidence=0.85,
+                        path=normalized,
+                        kind=classify_path(normalized),
+                        source="applescript", confidence=0.95,
                     )
                 )
 

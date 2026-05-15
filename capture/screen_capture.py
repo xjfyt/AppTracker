@@ -91,14 +91,20 @@ class ScreenCapture(QObject):
         self._paused = paused
 
     def on_window_changed(self, info: WindowInfo) -> None:
+        """事件驱动的截图：绕过 min_interval 节流，并稍等 ~120 ms 让窗口
+        切换动画结束、合成器把新窗口画好，否则常截到上一个 app。"""
         self._last_window = info
-        self.capture_now()
+        QTimer.singleShot(120, lambda: self._capture(force=True))
 
     def capture_now(self) -> None:
+        """定时器路径：按 min_interval 节流。"""
+        self._capture(force=False)
+
+    def _capture(self, force: bool) -> None:
         if self._paused:
             return
         now = time.time()
-        if now - self._last_capture_t < self.min_interval:
+        if not force and now - self._last_capture_t < self.min_interval:
             return
         self._last_capture_t = now
 
