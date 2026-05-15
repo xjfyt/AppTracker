@@ -1,0 +1,192 @@
+/* Active Tracker — dark theme */
+
+QWidget {
+    background: #0f1115;
+    color: #e6e8ee;
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+}
+
+#TopBar {
+    background: #181b22;
+    border-bottom: 1px solid #2a2f3a;
+}
+
+#AppTitle {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+#Badge {
+    background: #21252e;
+    color: #7aa2ff;
+    border: 1px solid #2a2f3a;
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+#PauseButton {
+    background: #2a2f3a;
+    color: #e6e8ee;
+    border: 1px solid #2a2f3a;
+    border-radius: 8px;
+    padding: 4px 14px;
+    font-weight: 500;
+}
+#PauseButton:hover { background: #353b48; }
+#PauseButton:checked {
+    background: #f1c97b;
+    color: #1a1a1a;
+    border-color: #f1c97b;
+}
+
+#MiniButton {
+    background: #21252e;
+    color: #e6e8ee;
+    border: 1px solid #2a2f3a;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 11px;
+}
+#MiniButton:hover { background: #353b48; }
+
+#PermissionBanner {
+    background: #3a2e10;
+    border-bottom: 1px solid #5a4514;
+}
+#BannerText {
+    color: #f1c97b;
+    background: transparent;
+}
+#PermissionBanner #MiniButton {
+    background: #f1c97b;
+    color: #1a1a1a;
+    border-color: #f1c97b;
+}
+
+#BodySplitter::handle {
+    background: #0f1115;
+}
+
+QFrame#Card {
+    background: #181b22;
+    border: 1px solid #2a2f3a;
+    border-radius: 12px;
+}
+
+#CardLabel {
+    color: #9aa1ad;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: transparent;
+}
+
+#AppName {
+    font-size: 22px;
+    font-weight: 600;
+    background: transparent;
+}
+
+#WindowTitle {
+    font-size: 15px;
+    font-weight: 500;
+    background: transparent;
+}
+
+#FieldKey {
+    color: #9aa1ad;
+    font-size: 11px;
+    background: transparent;
+}
+
+#Mono {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    background: transparent;
+}
+
+QLabel[dim="true"] {
+    color: #9aa1ad;
+}
+
+#BigNumber {
+    font-size: 20px;
+    font-weight: 600;
+    color: #7aa2ff;
+    background: transparent;
+}
+
+/* document list */
+#DocList {
+    background: #0f1115;
+    border: none;
+    border-radius: 8px;
+}
+#DocList::item {
+    background: #21252e;
+    margin: 0 0 6px 0;
+    border-radius: 8px;
+    border: 1px solid #2a2f3a;
+}
+
+QLabel#Chip {
+    background: rgba(255,255,255,0.05);
+    color: #9aa1ad;
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 11px;
+}
+QLabel#Chip[kind="file"] { color: #9ad7ff; }
+QLabel#Chip[kind="folder"] { color: #f1c97b; }
+QLabel#Chip[kind="url"] { color: #c89aff; }
+QLabel#Chip[kind="unknown"] { color: #9aa1ad; }
+QLabel#Chip[kind="high"] { background: rgba(110,231,168,0.15); color: #6ee7a8; }
+QLabel#Chip[kind="mid"]  { background: rgba(241,201,123,0.15); color: #f1c97b; }
+QLabel#Chip[kind="low"]  { background: rgba(255,255,255,0.05); color: #9aa1ad; }
+
+/* screenshot */
+#Screenshot {
+    background: #21252e;
+    border: 1px solid #2a2f3a;
+    border-radius: 8px;
+    color: #9aa1ad;
+}
+
+#Caption {
+    color: #9aa1ad;
+    font-size: 11px;
+    background: transparent;
+}
+
+/* errors */
+QFrame#Card[cardKind="errors"] {
+    background: rgba(255,124,124,0.06);
+    border-color: rgba(255,124,124,0.35);
+}
+#ErrorList {
+    background: #181b22;
+    border: 1px solid #2a2f3a;
+    border-radius: 8px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: #ff9999;
+    padding: 4px;
+}
+
+QListWidget {
+    outline: 0;
+}
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+}
+QScrollBar::handle:vertical {
+    background: #2a2f3a;
+    border-radius: 4px;
+    min-height: 24px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
