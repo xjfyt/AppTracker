@@ -24,11 +24,12 @@ from PySide6.QtWidgets import QApplication
 
 import qasync
 
+from api import APIServer
+from common.signals import bus
 from controllers.activity_monitor import ActivityMonitor
 from controllers.browser_bridge import BrowserBridge
-from controllers.screen_capture import ScreenCapture
-from common.signals import bus
 from controllers.integration_coordinator import IntegrationCoordinator
+from controllers.screen_capture import ScreenCapture
 from controllers.window_monitor import create_monitor
 from ui.main_window import MainWindow
 
@@ -75,7 +76,10 @@ def main() -> None:
     parser.add_argument("--debug", action="store_true", help="把日志同步打到 stderr")
     parser.add_argument("--no-activity", action="store_true", help="不启动键鼠监视器")
     parser.add_argument("--no-capture", action="store_true", help="不截图")
-    parser.add_argument("--no-browser-bridge", action="store_true", help="不开 WebSocket 桥")
+    parser.add_argument("--no-browser-bridge", action="store_true", help="不开浏览器扩展 WebSocket 桥")
+    parser.add_argument("--no-api", action="store_true", help="不启动 HTTP/SSE/WS API 服务")
+    parser.add_argument("--api-host", default="127.0.0.1", help="API 服务监听地址")
+    parser.add_argument("--api-port", type=int, default=5007, help="API 服务监听端口（默认 5007）")
     parser.add_argument("--check", action="store_true",
                         help="冒烟模式：构造完所有组件后 2 秒退出")
     args = parser.parse_args()
@@ -119,7 +123,13 @@ def main() -> None:
     # 5. 集成调度器（文件管理器 + 终端）
     coordinator = IntegrationCoordinator()
 
-    # 6. 主窗口
+    # 6. HTTP/SSE/WS API（可关闭）
+    api: Optional[APIServer] = None
+    api_task: Optional[asyncio.Task] = None
+    if not args.no_api:
+        api = APIServer(host=args.api_host, port=args.api_port)
+
+    # 7. 主窗口
     window = MainWindow(monitor=monitor)
     window.show()
 
@@ -134,9 +144,11 @@ def main() -> None:
             monitor.start()
         if activity is not None:
             activity.start()
+        nonlocal bridge_task, api_task
         if bridge is not None:
-            nonlocal bridge_task
             bridge_task = bridge.start_in_loop(loop)
+        if api is not None:
+            api_task = loop.create_task(api.start())
 
     QTimer.singleShot(0, _start_all)
 
@@ -149,6 +161,10 @@ def main() -> None:
             activity.stop()
         if bridge_task is not None and not bridge_task.done():
             bridge_task.cancel()
+        if api is not None:
+            loop.create_task(api.stop())
+        if api_task is not None and not api_task.done():
+            api_task.cancel()
 
     app.aboutToQuit.connect(_shutdown)
 
