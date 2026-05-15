@@ -1,4 +1,4 @@
-"""焦点窗口截图。mss 抓屏 → Pillow 缩放 → QImage 发到 UI。
+"""焦点窗口截图。mss 抓屏 → 直接构造 QImage 发到 UI。
 
 隐私：
   * 截图仅经内存到 UI，绝不写盘
@@ -10,12 +10,10 @@ from __future__ import annotations
 
 import logging
 import time
-from io import BytesIO
 from typing import Optional
 
 import mss
-from PIL import Image
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtGui import QImage
 
 from common.models import WindowInfo
@@ -87,23 +85,44 @@ class ScreenCapture(QObject):
 
     def _capture_active_window(self, info: Optional[WindowInfo]) -> Optional[QImage]:
         sct = self._ensure_sct()
+        # mss.monitors[0] 是 "virtual all-screens"，monitors[1..] 是各物理屏；
+        # 多屏睡眠 / 单屏 / 锁屏下可能 monitors[1] 缺或 monitors[0] 尺寸为 0
+        fallback_monitor = None
+        for m in sct.monitors[1:] + [sct.monitors[0]]:
+            if m.get("width", 0) > 0 and m.get("height", 0) > 0:
+                fallback_monitor = m
+                break
+        if fallback_monitor is None:
+            return None   # 没显示器可抓（合盖、锁屏等），静默跳过
+
         if info and info.geometry and info.geometry.width >= 10 and info.geometry.height >= 10:
             g = info.geometry
             bbox = {"left": g.x, "top": g.y, "width": g.width, "height": g.height}
             try:
                 shot = sct.grab(bbox)
             except Exception:
-                # 退化到主屏
-                shot = sct.grab(sct.monitors[1])
+                shot = sct.grab(fallback_monitor)
         else:
-            shot = sct.grab(sct.monitors[1])
+            shot = sct.grab(fallback_monitor)
 
-        img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
-        img.thumbnail((self.thumb_max_size, self.thumb_max_size))
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        qimg = QImage.fromData(buf.getvalue(), "PNG")
-        return qimg if not qimg.isNull() else None
+        # 直接从 BGRA 字节构造 QImage：mss 给的 bgra 在小端机器上字节序为
+        # B-G-R-A，正好和 Qt 的 ARGB32（小端 uint32 = 0xAARRGGBB）一致，
+        # 不需要 rgbSwapped。.copy() 让 QImage 脱离 mss 的原始 buffer
+        width, height = shot.size
+        qimg = QImage(
+            bytes(shot.bgra), width, height, width * 4,
+            QImage.Format.Format_ARGB32,
+        ).copy()
+        if qimg.isNull():
+            return None
+        # 按长边缩放到 thumb_max_size
+        if qimg.width() > self.thumb_max_size or qimg.height() > self.thumb_max_size:
+            qimg = qimg.scaled(
+                self.thumb_max_size, self.thumb_max_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        return qimg
 
     @staticmethod
     def _placeholder(text: str) -> QImage:

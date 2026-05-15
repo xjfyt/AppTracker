@@ -22,9 +22,20 @@ log = logging.getLogger(__name__)
 
 class NautilusIntegration(FileManagerIntegration):
     def matches(self, info: WindowInfo) -> bool:
-        exe = (info.process.executable or "") if info.process else ""
-        cls = info.window_class or ""
-        return "nautilus" in exe.lower() or cls.lower() == "nautilus" or "files" in (info.app_name or "").lower() and "nautilus" in (info.process.name or "").lower() if info.process else False
+        cls = (info.window_class or "").lower()
+        if cls == "nautilus":
+            return True
+        if info.process is None:
+            return False
+        exe = (info.process.executable or "").lower()
+        proc_name = (info.process.name or "").lower()
+        app_name = (info.app_name or "").lower()
+        # Nautilus 在 GNOME 下 app_name 常为 "Files"，配合进程名确认避免误判
+        if "nautilus" in exe or "nautilus" in proc_name:
+            return True
+        if "files" in app_name and "nautilus" in proc_name:
+            return True
+        return False
 
     async def query(self, info: WindowInfo) -> Optional[FileManagerState]:
         if not info.process:

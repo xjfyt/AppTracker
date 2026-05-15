@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject
 
 from common.models import BrowserTab
 from common.signals import bus
+from tools.port import find_free_port
 
 log = logging.getLogger(__name__)
 
@@ -20,13 +21,23 @@ TOKEN_DIR = Path.home() / ".active_tracker"
 TOKEN_PATH = TOKEN_DIR / "token"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5006
+PORT_FALLBACK_RANGE = 5    # 占用时往后再试 N 个端口
 
 
 class BrowserBridge(QObject):
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT):
         super().__init__()
         self.host = host
-        self.port = port
+        try:
+            self.port = find_free_port(host, port, port + PORT_FALLBACK_RANGE)
+            if self.port != port:
+                log.warning(
+                    "BrowserBridge: port %d busy, using %d (扩展端的端口也要相应改)",
+                    port, self.port,
+                )
+        except RuntimeError:
+            self.port = port   # 退化到首选端口，让 serve() 抛错给上层
+            log.error("BrowserBridge: no free port near %d, will likely fail", port)
         self.token = self._load_or_create_token()
         self.clients: set = set()
         self._server = None

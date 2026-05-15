@@ -15,14 +15,16 @@ import json
 import logging
 from typing import Optional
 
-from aiohttp import WSCloseCode, WSMsgType, web
+from aiohttp import WSMsgType, web
 
 from api.state import api_state
+from tools.port import find_free_port
 
 log = logging.getLogger(__name__)
 
 WS_HEARTBEAT_SEC = 30.0
 SSE_HEARTBEAT_SEC = 25.0
+PORT_FALLBACK_RANGE = 5
 
 
 async def health(_request: web.Request) -> web.Response:
@@ -144,7 +146,20 @@ class APIServer:
 
     def __init__(self, host: str = "127.0.0.1", port: int = 5007) -> None:
         self.host = host
-        self.port = port
+        try:
+            self.port = find_free_port(host, port, port + PORT_FALLBACK_RANGE)
+            if self.port != port:
+                log.warning("APIServer: port %d busy, using %d", port, self.port)
+        except RuntimeError:
+            self.port = port
+            log.error("APIServer: no free port near %d, will likely fail", port)
+        # 监听非 loopback 时给出安全提示
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            log.warning(
+                "APIServer binding to %s exposes data on the network — "
+                "考虑加 nginx + 鉴权，或换回 127.0.0.1",
+                host,
+            )
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
 

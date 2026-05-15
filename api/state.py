@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 from dataclasses import asdict
-from io import BytesIO
 from typing import Optional
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice
@@ -18,25 +16,6 @@ from common.signals import bus
 log = logging.getLogger(__name__)
 
 
-def _qimage_to_png_b64(qimg: QImage, max_size: int = 480) -> Optional[str]:
-    """QImage → PNG → base64 字符串。"""
-    if qimg is None or qimg.isNull():
-        return None
-    if qimg.width() > max_size or qimg.height() > max_size:
-        qimg = qimg.scaled(
-            max_size, max_size,
-            mode=QImage.Format.Format_RGB32,
-        ) if False else qimg.scaledToWidth(max_size)
-    ba = QByteArray()
-    buf = QBuffer(ba)
-    buf.open(QIODevice.OpenModeFlag.WriteOnly)
-    ok = qimg.save(buf, "PNG")
-    buf.close()
-    if not ok:
-        return None
-    return base64.b64encode(bytes(ba)).decode("ascii")
-
-
 class APIState:
     """单例：缓存最新状态 + 提供 asyncio 订阅队列给 SSE/WS 推流用。"""
 
@@ -44,9 +23,10 @@ class APIState:
         self._window: Optional[WindowInfo] = None
         self._activity: Optional[ActivityStats] = None
         self._browser_tab: Optional[BrowserTab] = None
-        self._latest_screenshot_png: Optional[bytes] = None   # 二进制 PNG
+        self._latest_screenshot_png: Optional[bytes] = None
         self._subscribers: set[asyncio.Queue] = set()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._dropped_count = 0
 
         bus.window_changed.connect(self._on_window)
         bus.activity_updated.connect(self._on_activity)
@@ -93,6 +73,13 @@ class APIState:
                 if q.full():
                     try:
                         q.get_nowait()   # 丢最旧的一条防止背压
+                        self._dropped_count += 1
+                        if self._dropped_count == 1 or self._dropped_count % 100 == 0:
+                            log.warning(
+                                "API subscriber queue full, dropping events "
+                                "(dropped=%d, consider faster consumer)",
+                                self._dropped_count,
+                            )
                     except asyncio.QueueEmpty:
                         pass
                 try:
@@ -128,7 +115,7 @@ class APIState:
         except Exception as exc:
             log.debug("screenshot to PNG failed: %s", exc)
             return
-        # 不在事件流里包大图，发"有更新"通知，客户端再拉
+        # 不在事件流里包大图，发"有更新"通知，客户端再拉 /screenshot
         self._broadcast({"type": "screenshot_ready"})
 
 

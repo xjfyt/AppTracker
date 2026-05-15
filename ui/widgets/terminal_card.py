@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
@@ -29,11 +29,11 @@ class TerminalCard(QFrame):
         self.source_lbl = QLabel("")
         self.source_lbl.setObjectName("Chip")
         head.addWidget(self.source_lbl)
-        copy_btn = QPushButton("Shell 脚本目录")
-        copy_btn.setObjectName("MiniButton")
-        copy_btn.setToolTip("复制 shell 集成脚本所在目录路径，方便在 ~/.bashrc 等里 source")
-        copy_btn.clicked.connect(self._copy_shell_dir)
-        head.addWidget(copy_btn)
+        self.copy_btn = QPushButton("Shell 脚本目录")
+        self.copy_btn.setObjectName("MiniButton")
+        self.copy_btn.setToolTip("复制 shell 集成脚本所在目录路径，方便在 ~/.bashrc 等里 source")
+        self.copy_btn.clicked.connect(self._copy_shell_dir)
+        head.addWidget(self.copy_btn)
         layout.addLayout(head)
 
         self.list = QListWidget()
@@ -128,7 +128,8 @@ class TerminalCard(QFrame):
         self.list.addItem(item)
         self.list.setItemWidget(item, container)
 
-    @staticmethod
-    def _copy_shell_dir() -> None:
+    def _copy_shell_dir(self) -> None:
         path = str(shell_integration_dir_path())
         QGuiApplication.clipboard().setText(path)
+        self.copy_btn.setText("✓ 已复制")
+        QTimer.singleShot(1500, lambda: self.copy_btn.setText("Shell 脚本目录"))
