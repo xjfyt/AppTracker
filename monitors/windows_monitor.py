@@ -63,9 +63,16 @@ class _HookThread(QThread):
 
     fired = Signal()
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._win_tid: int = 0   # 工作线程的 Win32 thread ID，stop 时用来 PostThreadMessage
+
     def run(self) -> None:
         import ctypes
         from ctypes import wintypes
+
+        # 关键：这里拿到的是这个 QThread 真正运行的 Win32 线程 ID
+        self._win_tid = int(ctypes.windll.kernel32.GetCurrentThreadId())
 
         EVENT_SYSTEM_FOREGROUND = 0x0003
         EVENT_OBJECT_NAMECHANGE = 0x800C
@@ -95,6 +102,14 @@ class _HookThread(QThread):
             for h in hooks:
                 user32.UnhookWinEvent(h)
 
+    def post_quit(self) -> None:
+        """从其他线程调用，让 PumpMessages 退出。"""
+        if not self._win_tid:
+            return
+        import ctypes
+        WM_QUIT = 0x0012
+        ctypes.windll.user32.PostThreadMessageW(self._win_tid, WM_QUIT, 0, 0)
+
 
 class WindowsMonitor(WindowMonitor):
     def __init__(self, bus):
@@ -113,12 +128,8 @@ class WindowsMonitor(WindowMonitor):
         self._hook.start()
 
     def _stop_native(self) -> None:
-        # 让 PumpMessages 退出
         try:
-            self._hook.requestInterruption()
-            # 发 WM_QUIT 让循环结束
-            import ctypes
-            ctypes.windll.user32.PostThreadMessageW(int(self._hook.currentThreadId()), 0x0012, 0, 0)
+            self._hook.post_quit()   # 给 hook 工作线程发 WM_QUIT
         except Exception:
             pass
         self._hook.wait(2000)

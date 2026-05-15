@@ -32,7 +32,10 @@ log = logging.getLogger(__name__)
 
 
 class _X11Thread(QThread):
-    """阻塞读 X 事件的工作线程。"""
+    """读 X 事件的工作线程：订阅 root._NET_ACTIVE_WINDOW + 活动窗口标题/几何。
+
+    用 pending() + 短 sleep 替代阻塞 next_event()，让 stop() 能在 ~50ms 内退出。
+    """
 
     fired = Signal()
 
@@ -45,18 +48,61 @@ class _X11Thread(QThread):
         self._stop = True
 
     def run(self) -> None:
+        import time
         try:
             from Xlib import display, X
             self._disp = display.Display()
             root = self._disp.screen().root
-            root.change_attributes(event_mask=X.PropertyChangeMask | X.SubstructureNotifyMask)
+            root.change_attributes(event_mask=X.PropertyChangeMask)
+
+            atom_active = self._disp.intern_atom("_NET_ACTIVE_WINDOW")
+            atom_name = self._disp.intern_atom("_NET_WM_NAME")
+            atom_wm_name = self._disp.intern_atom("WM_NAME")
+
+            current_active = None
+
+            def _subscribe_active() -> None:
+                nonlocal current_active
+                try:
+                    prop = root.get_full_property(atom_active, X.AnyPropertyType)
+                    if not prop or not prop.value:
+                        return
+                    new_active = int(prop.value[0])
+                    if new_active and new_active != current_active:
+                        try:
+                            win = self._disp.create_resource_object("window", new_active)
+                            win.change_attributes(
+                                event_mask=X.PropertyChangeMask | X.StructureNotifyMask
+                            )
+                        except Exception:
+                            pass
+                        current_active = new_active
+                except Exception:
+                    pass
+
+            _subscribe_active()
+
             while not self._stop:
-                ev = self._disp.next_event()
-                # 任何属性变化都触发一次重新查询；上层会做指纹去重
-                if ev.type in (X.PropertyNotify, X.ConfigureNotify):
-                    self.fired.emit()
+                if self._disp.pending() > 0:
+                    ev = self._disp.next_event()
+                    if ev.type == X.PropertyNotify:
+                        if ev.atom == atom_active:
+                            _subscribe_active()
+                            self.fired.emit()
+                        elif ev.atom in (atom_name, atom_wm_name):
+                            self.fired.emit()
+                    elif ev.type in (X.ConfigureNotify, X.MapNotify):
+                        self.fired.emit()
+                else:
+                    time.sleep(0.03)
         except Exception as exc:
             log.exception("X11 thread crashed: %s", exc)
+        finally:
+            try:
+                if self._disp is not None:
+                    self._disp.close()
+            except Exception:
+                pass
 
 
 class LinuxX11Monitor(WindowMonitor):
@@ -132,13 +178,13 @@ class LinuxX11Monitor(WindowMonitor):
         except Exception:
             pass
 
-        # 几何
+        # 几何 — translate_coords(root, 0, 0) 返回 win 原点在 root 坐标系中的位置
         try:
             geom = win.get_geometry()
             root = win.query_tree().root
-            coords = win.translate_coords(root, 0, 0)
+            coords = root.translate_coords(win, 0, 0)
             info.geometry = WindowGeometry(
-                x=int(-coords.x), y=int(-coords.y),
+                x=int(coords.x), y=int(coords.y),
                 width=int(geom.width), height=int(geom.height),
                 screen_index=0,
             )
