@@ -62,9 +62,7 @@ from core.utils import (
     expand_user,
     extract_paths_from_title,
     file_url_to_path,
-    find_shell_cwd,
     is_interesting_path,
-    looks_like_terminal,
 )
 
 log = logging.getLogger(__name__)
@@ -72,28 +70,9 @@ log = logging.getLogger(__name__)
 # 应用切换后内部窗口/标题变化的快轮询间隔
 FAST_POLL_INTERVAL_MS = 250
 
-# 单条 AppleScript 输出格式由 _maybe_run_applescript 按 bundle_id 分支解析。
-#  - Finder 输出 "folder|||sel1\nsel2\n..."（先文件夹再选中项，可能为空）
-#  - 浏览器输出 "URL\ttitle"
-FINDER_SCRIPT = '''
-tell application "Finder"
-  set folderPath to ""
-  try
-    set folderPath to POSIX path of (target of front window as alias)
-  end try
-  set selOutput to ""
-  try
-    set sel to selection as alias list
-    repeat with i in sel
-      set selOutput to selOutput & POSIX path of i & linefeed
-    end repeat
-  end try
-  return folderPath & "|||" & selOutput
-end tell
-'''
-
+# Finder 与终端的细节已迁到 integrations/，这里只保留浏览器 URL 兜底
+# （浏览器扩展未配置时仍有 BrowserCard 数据）。
 APPLESCRIPT_BY_BUNDLE: dict[str, str] = {
-    "com.apple.finder": FINDER_SCRIPT,
     "com.google.Chrome": (
         'tell application "Google Chrome"\n'
         '  if (count of windows) = 0 then return ""\n'
@@ -234,18 +213,7 @@ class MacOSMonitor(WindowMonitor):
                 )
             )
 
-        # 终端 → 找真正的 shell pwd（不是终端进程的 cwd）
-        if pid and looks_like_terminal(exe_path, info.app_name):
-            shell_cwd = find_shell_cwd(pid)
-            if shell_cwd:
-                info.document_paths.append(
-                    DocumentSource(
-                        path=shell_cwd, kind="folder",
-                        source="shell_pwd", confidence=0.8,
-                    )
-                )
-                info.extra["shell_cwd"] = shell_cwd
-
+        # 终端 shell pwd / Finder 选中项已迁到 integrations.coordinator
         info.document_paths = dedupe_documents(info.document_paths)
         return info
 
@@ -504,44 +472,13 @@ class MacOSMonitor(WindowMonitor):
         if not out:
             return
 
-        if bundle == "com.apple.finder":
-            self._parse_finder_output(info, out)
-        elif "\t" in out:
+        if "\t" in out:
             url, _title = out.split("\t", 1)
             if url.startswith(("http://", "https://")):
                 info.document_paths.append(
                     DocumentSource(
                         path=url, kind="url",
                         source="applescript", confidence=0.85,
-                    )
-                )
-
-    @staticmethod
-    def _parse_finder_output(info: WindowInfo, out: str) -> None:
-        """Finder 脚本输出：'folder|||sel1\\nsel2\\n...'。"""
-        if "|||" not in out:
-            return
-        folder, sel_block = out.split("|||", 1)
-        folder = folder.strip()
-        if folder and os.path.isdir(folder):
-            info.document_paths.append(
-                DocumentSource(
-                    path=folder, kind="folder",
-                    source="applescript", confidence=0.9,
-                )
-            )
-        for line in sel_block.splitlines():
-            p = line.strip()
-            if not p:
-                continue
-            # 选中项可能以 "/" 结尾（文件夹），统一去除
-            normalized = p.rstrip("/") or "/"
-            if os.path.exists(normalized):
-                info.document_paths.append(
-                    DocumentSource(
-                        path=normalized,
-                        kind=classify_path(normalized),
-                        source="applescript", confidence=0.95,
                     )
                 )
 

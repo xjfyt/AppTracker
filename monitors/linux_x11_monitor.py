@@ -25,9 +25,7 @@ from core.utils import (
     classify_path,
     dedupe_documents,
     extract_paths_from_title,
-    find_shell_cwd,
     is_interesting_path,
-    looks_like_terminal,
 )
 
 log = logging.getLogger(__name__)
@@ -214,19 +212,7 @@ class LinuxX11Monitor(WindowMonitor):
                 )
             )
 
-        # 终端 → 找真实 shell pwd
-        exe_hint = info.process.executable if info.process else None
-        if pid and looks_like_terminal(exe_hint, info.app_name):
-            shell_cwd = find_shell_cwd(pid)
-            if shell_cwd:
-                info.document_paths.append(
-                    DocumentSource(
-                        path=shell_cwd, kind="folder",
-                        source="shell_pwd", confidence=0.8,
-                    )
-                )
-                info.extra["shell_cwd"] = shell_cwd
-
+        # 终端 shell pwd 已迁到 integrations.coordinator
         info.document_paths = dedupe_documents(info.document_paths)
         return info
 
