@@ -8,11 +8,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from io import BytesIO
-from pathlib import Path
 from typing import Optional
 
 import mss
@@ -22,50 +20,9 @@ from PySide6.QtGui import QImage
 
 from common.models import WindowInfo
 from common.signals import bus
+from tools.blacklist import is_blacklisted, load_blacklist
 
 log = logging.getLogger(__name__)
-
-BLACKLIST_PATH = Path.home() / ".active_tracker" / "blacklist.json"
-
-DEFAULT_BLACKLIST = {
-    "bundle_ids": [
-        "com.agilebits.onepassword",
-        "com.1password.",
-        "com.keepassxc.",
-        "com.lastpass.",
-        "com.bitwarden.",
-    ],
-    "executables": [
-        "1Password", "1password.exe",
-        "KeePassXC", "keepassxc.exe",
-        "Bitwarden", "bitwarden.exe",
-    ],
-}
-
-
-def _load_blacklist() -> dict:
-    if not BLACKLIST_PATH.exists():
-        BLACKLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-        BLACKLIST_PATH.write_text(json.dumps(DEFAULT_BLACKLIST, indent=2))
-        return DEFAULT_BLACKLIST
-    try:
-        return json.loads(BLACKLIST_PATH.read_text())
-    except Exception:
-        return DEFAULT_BLACKLIST
-
-
-def _is_blacklisted(info: WindowInfo, bl: dict) -> bool:
-    bid = (info.app_bundle_id or "").lower()
-    for prefix in bl.get("bundle_ids", []):
-        if bid and bid.startswith(prefix.lower()):
-            return True
-    exe = (info.process.executable if info.process and info.process.executable else "").lower()
-    name = (info.app_name or "").lower()
-    for hint in bl.get("executables", []):
-        h = hint.lower()
-        if h and (h in exe or h in name):
-            return True
-    return False
 
 
 class ScreenCapture(QObject):
@@ -77,7 +34,7 @@ class ScreenCapture(QObject):
         self._sct: Optional[mss.base.MSSBase] = None
         self._last_window: Optional[WindowInfo] = None
         self._paused = False
-        self._blacklist = _load_blacklist()
+        self._blacklist = load_blacklist()
 
         bus.window_changed.connect(self.on_window_changed)
         bus.paused_changed.connect(self.set_paused)
@@ -109,7 +66,7 @@ class ScreenCapture(QObject):
         self._last_capture_t = now
 
         info = self._last_window
-        if info and _is_blacklisted(info, self._blacklist):
+        if info and is_blacklisted(info, self._blacklist):
             qimg = self._placeholder("已屏蔽 — 敏感应用")
             bus.screenshot_ready.emit(qimg)
             return

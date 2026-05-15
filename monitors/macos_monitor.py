@@ -56,7 +56,7 @@ from common.models import (
     WindowGeometry,
     WindowInfo,
 )
-from common.utils import (
+from tools.path_filter import (
     classify_path,
     dedupe_documents,
     expand_user,

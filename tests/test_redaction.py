@@ -1,4 +1,4 @@
-from integrations.redaction import redact_cmdline
+from tools.redaction import redact_cmdline
 
 
 def test_redact_password_equals():
