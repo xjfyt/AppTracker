@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from common.models import TerminalContext, TerminalProcess
-from integrations.terminals.shell_files import shell_integration_dir_path
+from plugins.terminals.shell_files import shell_integration_dir_path
 
 
 class TerminalCard(QFrame):

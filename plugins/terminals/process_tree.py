@@ -11,8 +11,8 @@ import psutil
 
 from common.models import TerminalContext, TerminalProcess, WindowInfo
 from tools.redaction import redact_cmdline
-from integrations.terminals.base import TerminalIntegration, detect_terminal
-from integrations.terminals.shell_files import read_shell_cwds
+from plugins.terminals.base import TerminalIntegration, detect_terminal
+from plugins.terminals.shell_files import read_shell_cwds
 
 log = logging.getLogger(__name__)
 

@@ -15,7 +15,7 @@ from typing import Optional
 import psutil
 
 from common.models import FileManagerState, FileManagerWindow, WindowInfo
-from integrations.file_managers.base import FileManagerIntegration
+from plugins.file_managers.base import FileManagerIntegration
 
 log = logging.getLogger(__name__)
 

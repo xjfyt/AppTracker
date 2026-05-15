@@ -19,45 +19,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from typing import Optional
 
 from PySide6.QtCore import QObject
 
 from common.models import WindowInfo
 from common.signals import bus
-from integrations.file_managers.base import FileManagerIntegration
-from integrations.terminals.base import TerminalIntegration
+from plugins import file_managers, terminals
 
 log = logging.getLogger(__name__)
-
-
-def _build_file_managers() -> list[FileManagerIntegration]:
-    plat = sys.platform
-    out: list[FileManagerIntegration] = []
-    if plat == "darwin":
-        from integrations.file_managers.mac_finder import FinderIntegration
-        out.append(FinderIntegration())
-    elif plat.startswith("win"):
-        from integrations.file_managers.win_explorer import ExplorerIntegration
-        out.append(ExplorerIntegration())
-    elif plat.startswith("linux"):
-        from integrations.file_managers.linux_nautilus import NautilusIntegration
-        from integrations.file_managers.linux_dolphin import DolphinIntegration
-        out.extend([NautilusIntegration(), DolphinIntegration()])
-    return out
-
-
-def _build_terminal() -> TerminalIntegration:
-    from integrations.terminals.process_tree import ProcessTreeTerminal
-    return ProcessTreeTerminal()
 
 
 class IntegrationCoordinator(QObject):
     def __init__(self) -> None:
         super().__init__()
-        self.file_managers = _build_file_managers()
-        self.terminal = _build_terminal()
+        self.file_managers = file_managers.get_for_platform()
+        self.terminal = terminals.get_default()
         self._inflight: Optional[asyncio.Task] = None
         self._paused = False
         bus.window_changed.connect(self.on_window_changed)

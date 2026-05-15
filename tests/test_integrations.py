@@ -8,8 +8,8 @@ import pytest
 
 from common.models import ProcessInfo, WindowInfo
 from controllers.integration_coordinator import IntegrationCoordinator
-from integrations.terminals.base import detect_terminal
-from integrations.terminals.shell_files import (
+from plugins.terminals.base import detect_terminal
+from plugins.terminals.shell_files import (
     SHELLS_DIR, read_shell_cwds, shell_integration_dir_path,
 )
 
@@ -59,7 +59,7 @@ def test_shell_integration_dir_exists():
 def test_read_shell_cwds_handles_missing_dir(tmp_path, monkeypatch):
     fake = tmp_path / "no_such_dir"
     monkeypatch.setattr(
-        "integrations.terminals.shell_files.SHELLS_DIR", fake,
+        "plugins.terminals.shell_files.SHELLS_DIR", fake,
     )
     assert read_shell_cwds() == {}
 
@@ -72,7 +72,7 @@ def test_read_shell_cwds_reads_valid(tmp_path, monkeypatch):
     f = fake / f"{pid}.cwd"
     f.write_text("/tmp/work")
     monkeypatch.setattr(
-        "integrations.terminals.shell_files.SHELLS_DIR", fake,
+        "plugins.terminals.shell_files.SHELLS_DIR", fake,
     )
     out = read_shell_cwds()
     assert out.get(pid) == "/tmp/work"
@@ -85,7 +85,7 @@ def test_read_shell_cwds_cleans_dead_pid(tmp_path, monkeypatch):
     f = fake / f"{dead_pid}.cwd"
     f.write_text("/tmp/dead")
     monkeypatch.setattr(
-        "integrations.terminals.shell_files.SHELLS_DIR", fake,
+        "plugins.terminals.shell_files.SHELLS_DIR", fake,
     )
     out = read_shell_cwds()
     assert dead_pid not in out
