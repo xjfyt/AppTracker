@@ -18,6 +18,7 @@ from typing import Optional
 from aiohttp import WSMsgType, web
 
 from api.state import api_state
+from common.signals import bus
 from tools.port import find_free_port
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,26 @@ async def screenshot(_request: web.Request) -> web.Response:
     if png is None:
         return web.Response(status=404, text="no screenshot yet")
     return web.Response(body=png, content_type="image/png")
+
+
+async def screenshot_enabled(request: web.Request) -> web.Response:
+    """GET 返回当前开关状态，POST {"enabled": true/false} 切换。
+    POST 走 bus.screenshot_enabled_changed.emit，UI 按钮也会同步刷新。"""
+    if request.method == "GET":
+        return web.json_response({"enabled": api_state.screenshot_enabled})
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "expected JSON body"}, status=400)
+    val = body.get("enabled")
+    if not isinstance(val, bool):
+        return web.json_response({"error": "enabled must be bool"}, status=400)
+    # 信号要在 Qt 主线程触发，否则 ScreenCapture 的槽不会安全调用：
+    # bus 是 QObject，emit() 跨线程默认走 QueuedConnection 投到主线程，所以
+    # 直接 emit 即可（aiohttp 是异步 task，跑在主线程的 asyncio loop 里，
+    # 而 qasync 让 asyncio loop == Qt loop，故 emit 实际同线程派发）
+    bus.screenshot_enabled_changed.emit(val)
+    return web.json_response({"enabled": val})
 
 
 async def events_sse(request: web.Request) -> web.StreamResponse:
@@ -136,6 +157,8 @@ def make_app() -> web.Application:
     app.router.add_get("/api/v1/health", health)
     app.router.add_get("/api/v1/snapshot", snapshot)
     app.router.add_get("/api/v1/screenshot", screenshot)
+    app.router.add_get("/api/v1/screenshot/enabled", screenshot_enabled)
+    app.router.add_post("/api/v1/screenshot/enabled", screenshot_enabled)
     app.router.add_get("/api/v1/events", events_sse)
     app.router.add_get("/api/v1/ws", events_ws)
     return app

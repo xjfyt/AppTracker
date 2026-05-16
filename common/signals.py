@@ -16,6 +16,7 @@ class SignalBus(QObject):
     browser_tab_updated = Signal(BrowserTab)    # 浏览器扩展推送
     browser_connected = Signal(bool)            # 扩展连接状态变化
     screenshot_ready = Signal(QImage)           # 新截图就绪
+    screenshot_enabled_changed = Signal(bool)   # 截图开关切换
     error_occurred = Signal(str, str)           # (source, message)
     paused_changed = Signal(bool)               # 全局暂停
 

@@ -17,6 +17,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
@@ -208,7 +209,12 @@ def main() -> None:
         if api_task is not None and not api_task.done():
             api_task.cancel()
         _signal_pump.stop()
-        QTimer.singleShot(3000, _hard_exit)
+        # threading.Timer 不依赖 Qt 事件循环——app.quit() 之后 Qt loop
+        # 就退出了，QTimer.singleShot 永远不会 fire。daemon 让 Python
+        # 真能优雅退时不被它挡住。
+        t = threading.Timer(3.0, _hard_exit)
+        t.daemon = True
+        t.start()
 
     app.aboutToQuit.connect(_shutdown)
 

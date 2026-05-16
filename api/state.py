@@ -24,6 +24,7 @@ class APIState:
         self._activity: Optional[ActivityStats] = None
         self._browser_tab: Optional[BrowserTab] = None
         self._latest_screenshot_png: Optional[bytes] = None
+        self._screenshot_enabled: bool = False
         self._subscribers: set[asyncio.Queue] = set()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._dropped_count = 0
@@ -32,6 +33,7 @@ class APIState:
         bus.activity_updated.connect(self._on_activity)
         bus.browser_tab_updated.connect(self._on_browser_tab)
         bus.screenshot_ready.connect(self._on_screenshot)
+        bus.screenshot_enabled_changed.connect(self._on_screenshot_enabled)
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """API server 启动时调用，告诉 state 用哪个 asyncio loop 派发。"""
@@ -45,10 +47,15 @@ class APIState:
             "activity": asdict(self._activity) if self._activity else None,
             "browser_tab": asdict(self._browser_tab) if self._browser_tab else None,
             "has_screenshot": self._latest_screenshot_png is not None,
+            "screenshot_enabled": self._screenshot_enabled,
         }
 
     def latest_screenshot(self) -> Optional[bytes]:
         return self._latest_screenshot_png
+
+    @property
+    def screenshot_enabled(self) -> bool:
+        return self._screenshot_enabled
 
     # ---- subscription for SSE / WS ----
 
@@ -103,6 +110,10 @@ class APIState:
     def _on_browser_tab(self, tab: BrowserTab) -> None:
         self._browser_tab = tab
         self._broadcast({"type": "browser_tab_updated", "data": asdict(tab)})
+
+    def _on_screenshot_enabled(self, enabled: bool) -> None:
+        self._screenshot_enabled = enabled
+        self._broadcast({"type": "screenshot_enabled_changed", "data": {"enabled": enabled}})
 
     def _on_screenshot(self, qimg: QImage) -> None:
         try:

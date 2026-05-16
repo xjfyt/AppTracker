@@ -56,6 +56,72 @@ OPEN_FILES_BLACKLIST = {
     "explorer.exe",   # Explorer 走专用 COM 集成
 }
 
+# Office / WPS 走 COM 自动化拿 ActiveDocument.FullName —— 这是最权威的来源，
+# open_files() 有时拿不到（Office 用 MMF / 短句柄），UIA 也看不到 Word 的
+# 文档属性。WPS 安装后会注册同名 ProgID，所以一套表覆盖两家。
+# value = (ProgID, Documents collection 属性名)
+OFFICE_COM_PROGIDS: dict[str, tuple[str, str]] = {
+    # Microsoft Office
+    "winword.exe": ("Word.Application", "Documents"),
+    "excel.exe": ("Excel.Application", "Workbooks"),
+    "powerpnt.exe": ("PowerPoint.Application", "Presentations"),
+    # WPS Office（中文 / 国际版）
+    "wps.exe": ("Word.Application", "Documents"),
+    "et.exe": ("Excel.Application", "Workbooks"),
+    "wpp.exe": ("PowerPoint.Application", "Presentations"),
+}
+
+
+def _office_active_paths(progid: str, collection_attr: str) -> list[str]:
+    """Worker 线程里跑：拿 Office/WPS 当前 application 实例所有打开文档的完整路径。
+
+    GetActiveObject 只能在有运行实例时拿到，否则抛 com_error。每次调用都
+    独立 CoInitialize / CoUninitialize，避免污染其他线程的 COM 状态。
+    返回 ["C:\\path\\to\\doc.docx", ...]；未保存的新建文档（FullName 返回
+    "Document1" 之类没有路径分隔符的值）直接丢弃。"""
+    try:
+        import pythoncom    # type: ignore
+        import win32com.client    # type: ignore
+    except ImportError:
+        return []
+    try:
+        pythoncom.CoInitialize()
+    except Exception:
+        pass
+    paths: list[str] = []
+    try:
+        app = win32com.client.GetActiveObject(progid)
+        collection = getattr(app, collection_attr, None)
+        if collection is not None:
+            # COM collection 没法用 enumerate，靠 Count + Item(idx) 走（idx 从 1 起）
+            try:
+                count = int(collection.Count)
+            except Exception:
+                count = 0
+            for idx in range(1, count + 1):
+                try:
+                    doc = collection.Item(idx)
+                    full = str(doc.FullName or "")
+                except Exception:
+                    continue
+                # FullName 在未保存时是 "Document1" / "Workbook1" 这种短名；
+                # 真实路径要么 "C:\..." 要么 UNC "\\server\share\..."
+                if not full:
+                    continue
+                is_real_path = (
+                    (len(full) >= 3 and full[1] == ":" and full[2] in ("\\", "/"))
+                    or full.startswith("\\\\")
+                )
+                if is_real_path:
+                    paths.append(full)
+    except Exception as exc:
+        log.debug("office COM lookup failed for %s: %s", progid, exc)
+    try:
+        pythoncom.CoUninitialize()
+    except Exception:
+        pass
+    return paths
+
 
 def _file_description(exe: str) -> Optional[str]:
     if not exe:
@@ -162,6 +228,11 @@ class WindowsMonitor(WindowMonitor):
         self._files_cache_hwnd: Optional[int] = None
         self._files_cache_paths: list[str] = []
         self._files_inflight = False
+        # Office / WPS COM 查询同一套缓存模型；同一个 pool 串行跑没问题，
+        # COM 调用通常 <100ms，open_files 通常 <300ms
+        self._office_cache_hwnd: Optional[int] = None
+        self._office_cache_paths: list[str] = []
+        self._office_inflight = False
 
     def _on_hook_fired(self) -> None:
         if not self._debounce.isActive():
@@ -243,9 +314,13 @@ class WindowsMonitor(WindowMonitor):
             self._collect_via_uia(info, hwnd)
         if info.window_title:
             self._collect_from_title(info)
-        # Typora / WPS / Office 这类编辑器把当前文档作为句柄 hold 住，
-        # open_files() 是定位完整路径最直接的方式。同 UIA 一样后台跑、
-        # 缓存复用，绝不在主线程等。浏览器 / Electron 大户拉黑跳过。
+        # Office / WPS 走 COM —— 这俩家用 MMF / 短句柄持有文档，
+        # open_files 偶尔抓不到；ActiveDocument.FullName 是最权威的来源
+        if pid:
+            self._collect_office_com_async(info, hwnd)
+        # Typora 等编辑器把当前文档作为句柄 hold 住，open_files() 是
+        # 定位完整路径最直接的方式。同 UIA 一样后台跑、缓存复用，绝不
+        # 在主线程等。浏览器 / Electron 大户拉黑跳过。
         if pid:
             self._collect_open_files_async(info, hwnd, pid)
         if info.process and info.process.cwd:
@@ -393,6 +468,42 @@ class WindowsMonitor(WindowMonitor):
             if self._files_cache_hwnd == hwnd:
                 self._files_cache_paths = paths
             self._files_inflight = False
+
+        fut.add_done_callback(_store)
+
+    def _collect_office_com_async(self, info: WindowInfo, hwnd: int) -> None:
+        """Office / WPS：用 COM GetActiveObject 拿 ActiveDocument.FullName。
+        同 open_files / UIA 一样异步缓存，主线程 0 阻塞。"""
+        proc_name_lc = (info.process.name or "").lower() if info.process else ""
+        if proc_name_lc not in OFFICE_COM_PROGIDS:
+            return
+
+        if self._office_cache_hwnd == hwnd:
+            for path in self._office_cache_paths:
+                info.document_paths.append(
+                    DocumentSource(
+                        path=path, kind=classify_path(path),
+                        source="office_com", confidence=0.95,
+                    )
+                )
+        else:
+            self._office_cache_hwnd = hwnd
+            self._office_cache_paths = []
+
+        if self._office_inflight:
+            return
+        self._office_inflight = True
+        progid, attr = OFFICE_COM_PROGIDS[proc_name_lc]
+        fut = self._files_pool.submit(_office_active_paths, progid, attr)
+
+        def _store(f, hwnd=hwnd) -> None:
+            try:
+                paths = f.result()
+            except Exception:
+                paths = []
+            if self._office_cache_hwnd == hwnd:
+                self._office_cache_paths = paths
+            self._office_inflight = False
 
         fut.add_done_callback(_store)
 

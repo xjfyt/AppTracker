@@ -24,7 +24,12 @@ log = logging.getLogger(__name__)
 
 
 class ScreenCapture(QObject):
-    def __init__(self, max_fps: float = 0.5, thumb_max_size: int = 480):
+    def __init__(
+        self,
+        max_fps: float = 0.5,
+        thumb_max_size: int = 480,
+        enabled: bool = False,
+    ):
         super().__init__()
         self.min_interval = 1.0 / max_fps
         self.thumb_max_size = thumb_max_size
@@ -32,23 +37,47 @@ class ScreenCapture(QObject):
         self._sct: Optional[mss.base.MSSBase] = None
         self._last_window: Optional[WindowInfo] = None
         self._paused = False
+        self._enabled = enabled
         self._blacklist = load_blacklist()
 
         bus.window_changed.connect(self.on_window_changed)
         bus.paused_changed.connect(self.set_paused)
+        bus.screenshot_enabled_changed.connect(self.set_enabled)
 
         self._timer = QTimer(self)
         self._timer.setInterval(int(self.min_interval * 1000))
         self._timer.timeout.connect(self.capture_now)
-        self._timer.start()
+        if self._enabled:
+            self._timer.start()
 
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
+
+    def set_enabled(self, enabled: bool) -> None:
+        if enabled == self._enabled:
+            return
+        self._enabled = enabled
+        if enabled:
+            self._timer.start()
+        else:
+            self._timer.stop()
+            # 关闭后释放 mss，再次启用时重新初始化
+            if self._sct is not None:
+                try:
+                    self._sct.close()
+                except Exception:
+                    pass
+                self._sct = None
+
+    def is_enabled(self) -> bool:
+        return self._enabled
 
     def on_window_changed(self, info: WindowInfo) -> None:
         """事件驱动的截图：绕过 min_interval 节流，并稍等 ~60 ms 让窗口
         切换动画结束、合成器把新窗口画好，否则常截到上一个 app。"""
         self._last_window = info
+        if not self._enabled:
+            return
         QTimer.singleShot(60, lambda: self._capture(force=True))
 
     def capture_now(self) -> None:
@@ -56,7 +85,7 @@ class ScreenCapture(QObject):
         self._capture(force=False)
 
     def _capture(self, force: bool) -> None:
-        if self._paused:
+        if self._paused or not self._enabled:
             return
         now = time.time()
         if not force and now - self._last_capture_t < self.min_interval:
