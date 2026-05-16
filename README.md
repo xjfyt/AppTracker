@@ -1,19 +1,16 @@
 ## 一、项目介绍
 
-Active Tracker 是一个 Rust/Tauri 版本地活动追踪器。底层核心是无界面的 Rust agent，负责采集当前窗口、进程、终端、文件管理器、浏览器标签页、截图和键鼠活动，并通过本机 API 对外提供状态；Tauri 只是一个读取本机 API 的页面。
+AppTracker 是一个 Tauri 桌面应用，集成了窗口/文档/终端/浏览器 Tab/键鼠活动/可选截图等本地采集能力。整个进程只暴露一个端口（默认 5007），同时承载 UI、采集核与浏览器扩展桥。
 
 ## 二、一键命令
 
 以下命令都在项目根目录执行。
 
 ```powershell
-# 启动 Tauri 界面；内嵌 Rust agent 会一起启动
+# 启动 AppTracker 桌面端（带 UI；采集核内嵌运行）
 npm run dev
 
-# 只启动无界面 agent，适合作为你们软件的 sidecar
-npm run agent
-
-# 一键打包 release 版 agent 和 Tauri 应用
+# 打包 release 版应用
 npm run package
 
 # 格式检查、编译检查和 Rust 测试
@@ -27,73 +24,45 @@ npm run check
 Windows 下产物位于：
 
 ```text
-target/release/active-tracker-agent.exe
 target/release/active-tracker-tauri.exe
 ```
 
-macOS / Linux 下文件名没有 `.exe` 后缀，但命令相同。
+macOS / Linux 下文件名没有 `.exe` 后缀。该二进制即 AppTracker 桌面端，启动后同时托管 UI、采集核与浏览器扩展桥，仅占用一个端口（默认 5007）。
 
 ## 四、API 说明
 
 ### 1、默认监听
 
-- API：`http://127.0.0.1:5007`
-- 浏览器扩展桥：`ws://127.0.0.1:5006`
+- 唯一端口：`http://127.0.0.1:5007`（HTTP/WebSocket/SSE 共享）
 
-### 2、路由
+### 2、主要路由
 
 - `GET /api/v1/health`
 - `GET /api/v1/snapshot`
 - `GET /api/v1/screenshot`
-- `GET /api/v1/events`
+- `GET /api/v1/events` (SSE)
 - `GET /api/v1/ws`
+- `GET /api/v1/browser` (浏览器扩展 WebSocket)
+- `GET /api/v1/bridge_token`
 - `GET/POST /api/v1/pause`
+- `GET/POST /api/v1/capture`（截图开关，默认关闭）
+- `GET/POST /api/v1/show_process_paths`（是否展示进程上下文路径，默认关闭）
+
+完整列表见 [docs/api.md](docs/api.md)。
 
 ### 3、鉴权
 
-浏览器扩展使用 `~/.active_tracker/token` 鉴权。agent 首次启动时会自动生成该 token。
+浏览器扩展通过 `~/.apptracker/token`（旧版 `~/.active_tracker/token` 会自动迁移）。AppTracker 首次启动时会自动生成该 token，并通过 `/api/v1/bridge_token` 让扩展一键拉取。
 
 ## 五、浏览器扩展安装
 
-浏览器扩展用于把当前活动标签页的 URL 和标题发送给本机 agent。主程序无法稳定、合规地直接读取所有浏览器 URL，所以浏览器信息建议始终通过扩展获取。
+浏览器扩展用于把当前活动标签页的 URL 和标题发送给本机 AppTracker。主程序无法稳定、合规地直接读取所有浏览器 URL，所以浏览器信息建议始终通过扩展获取。
 
-### 1、安装前准备
+1. 启动 AppTracker 桌面端（`npm run dev` 或打包后的二进制）。
+2. 在 Chromium 系浏览器打开 `chrome://extensions`（或 Firefox `about:debugging`），加载 `browser_extension/` 目录。
+3. 点击扩展图标 → **Sync**。如果 AppTracker 正在运行，扩展会自动通过 `/api/v1/bridge_token` 拉到 token 并连接。
 
-先启动 agent：
-
-```powershell
-npm run agent
-```
-
-然后读取 token：
-
-```bash
-cat ~/.active_tracker/token
-```
-
-Windows PowerShell 可以用：
-
-```powershell
-Get-Content "$HOME\.active_tracker\token"
-```
-
-### 2、Chrome / Edge / Brave / Arc
-
-1. 打开浏览器扩展管理页，例如 `chrome://extensions` 或 `edge://extensions`。
-2. 打开“开发者模式”。
-3. 选择“加载已解压的扩展程序”。
-4. 选择项目里的 `browser_extension/` 目录。
-5. 点击扩展图标，粘贴 `~/.active_tracker/token` 内容并保存。
-6. 图标状态变为已连接后，agent 的 `browser_tab` 字段会开始更新。
-
-### 3、Firefox 临时安装
-
-1. 打开 `about:debugging#/runtime/this-firefox`。
-2. 选择“临时载入附加组件”。
-3. 选择 `browser_extension/manifest.json`。
-4. 点击扩展图标，粘贴 token 并保存。
-
-Firefox 的临时扩展会在浏览器关闭后失效，长期使用需要正式签名安装。
+如需自定义端口或者手动粘贴 token，详见 [browser_extension/README.md](browser_extension/README.md)。
 
 ## 六、终端扩展安装
 
@@ -209,4 +178,4 @@ type "%USERPROFILE%\.active_tracker\shells\%ACTIVE_TRACKER_CMD_PID%.cwd"
 
 ## 八、接入建议
 
-如果要接入到其他软件，推荐把 `tracker-agent` 作为 sidecar 进程启动，然后通过 HTTP/SSE/WebSocket 读取状态。这样采集权限、平台差异和异常崩溃都能和主程序隔离。
+如果要接入到其他软件，把 AppTracker 桌面端常驻启动即可，然后通过 HTTP/SSE/WebSocket 端口 5007 读取状态。这样采集权限、平台差异和异常崩溃都和主程序隔离。

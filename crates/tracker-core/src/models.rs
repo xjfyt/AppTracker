@@ -17,12 +17,29 @@ pub struct WindowGeometry {
     pub screen_index: i32,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DocumentCategory {
+    /// 文档来自用户的真实打开/浏览操作（文件管理器、终端 cwd、Office 当前打开等）。
+    User,
+    /// 文档来自进程自身上下文（cwd、启动目录），通常是噪声。
+    Process,
+}
+
+impl Default for DocumentCategory {
+    fn default() -> Self {
+        DocumentCategory::User
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DocumentSource {
     pub path: String,
     pub kind: String,
     pub source: String,
     pub confidence: f32,
+    #[serde(default)]
+    pub category: DocumentCategory,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -181,6 +198,7 @@ pub struct Snapshot {
     pub has_screenshot: bool,
     pub paused: bool,
     pub capture_enabled: bool,
+    pub show_process_paths: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

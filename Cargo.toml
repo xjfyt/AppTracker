@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/tracker-core",
-    "crates/tracker-agent",
     "desktop/src-tauri",
 ]
 resolver = "2"

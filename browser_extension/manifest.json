@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Active Tracker Bridge",
-  "version": "0.1.0",
-  "description": "Streams active tab info to the local Active Tracker app via WebSocket.",
+  "name": "AppTracker Bridge",
+  "version": "0.2.0",
+  "description": "Streams active tab info to the local AppTracker app via WebSocket.",
   "permissions": ["tabs", "activeTab", "storage", "alarms"],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1/*", "ws://127.0.0.1/*"],
   "background": {
     "service_worker": "background.js"
   },
@@ -22,7 +22,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "active-tracker@localhost",
+      "id": "apptracker@localhost",
       "strict_min_version": "115.0"
     }
   }

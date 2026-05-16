@@ -4,7 +4,7 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "tracker_core=info,apptracker_tauri=info".to_string()),
+                .unwrap_or_else(|_| "tracker_core=info,apptracker=info".to_string()),
         )
         .try_init()
         .ok();
@@ -14,18 +14,15 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 match start_agent(AgentConfig::default()).await {
                     Ok(handle) => {
-                        tracing::info!(addr = %handle.api.addr, "embedded tracker API started");
-                        if let Some(bridge) = &handle.browser_bridge {
-                            tracing::info!(
-                                addr = %bridge.addr,
-                                token = %bridge.token_path.display(),
-                                "embedded browser bridge started"
-                            );
-                        }
+                        tracing::info!(
+                            addr = %handle.api.addr,
+                            bridge_token_path = %handle.api.bridge_token_path.display(),
+                            "AppTracker started"
+                        );
                         std::future::pending::<()>().await;
                     }
                     Err(exc) => {
-                        tracing::error!(error = %exc, "failed to start embedded tracker API");
+                        tracing::error!(error = %exc, "failed to start AppTracker core");
                     }
                 }
             });

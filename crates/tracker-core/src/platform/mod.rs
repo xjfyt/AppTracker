@@ -1,4 +1,4 @@
-use crate::models::{DocumentSource, ProcessInfo, WindowInfo};
+use crate::models::{DocumentCategory, DocumentSource, ProcessInfo, WindowInfo};
 use crate::tools::{
     classify_path, dedupe_documents, document_from_existing_path, extract_paths_from_title,
     is_interesting_path, likely_document_name_from_title, normalize_path_lossy,
@@ -80,6 +80,7 @@ pub fn collect_title_and_cwd_documents(info: &mut WindowInfo) {
                 kind,
                 source: "title".to_string(),
                 confidence,
+                category: DocumentCategory::User,
             });
         }
         collect_title_name_documents(info);
@@ -90,6 +91,7 @@ pub fn collect_title_and_cwd_documents(info: &mut WindowInfo) {
             kind: "folder".to_string(),
             source: "cwd".to_string(),
             confidence: 0.3,
+            category: DocumentCategory::Process,
         });
     }
     info.document_paths = dedupe_documents(std::mem::take(&mut info.document_paths));
@@ -100,15 +102,20 @@ fn collect_cmdline_documents(info: &mut WindowInfo) {
         return;
     };
     for token in &proc_.cmdline {
-        if let Some(doc) = document_from_existing_path(token, "cmdline", 0.85) {
+        if let Some(doc) =
+            document_from_existing_path(token, "cmdline", 0.85, DocumentCategory::User)
+        {
             info.document_paths.push(doc);
             continue;
         }
         if let Some(cwd) = &proc_.cwd {
             let joined = PathBuf::from(cwd).join(token.trim_matches(['"', '\'']));
-            if let Some(doc) =
-                document_from_existing_path(&joined.to_string_lossy(), "cmdline", 0.8)
-            {
+            if let Some(doc) = document_from_existing_path(
+                &joined.to_string_lossy(),
+                "cmdline",
+                0.8,
+                DocumentCategory::User,
+            ) {
                 info.document_paths.push(doc);
             }
         }
@@ -121,9 +128,12 @@ fn collect_title_name_documents(info: &mut WindowInfo) {
     };
     for dir in candidate_search_dirs(info) {
         let candidate = dir.join(&name);
-        if let Some(doc) =
-            document_from_existing_path(&candidate.to_string_lossy(), "title_filename", 0.55)
-        {
+        if let Some(doc) = document_from_existing_path(
+            &candidate.to_string_lossy(),
+            "title_filename",
+            0.55,
+            DocumentCategory::User,
+        ) {
             info.document_paths.push(doc);
         }
     }

@@ -43,7 +43,15 @@
         </header>
         <div id="windowGrid" class="grid"></div>
 
-        <h3 class="section-title">文档 / 路径</h3>
+        <header class="panel-head panel-head-spaced">
+          <h3 class="section-title">文档 / 路径</h3>
+          <span class="spacer"></span>
+          <label class="switch tiny" title="同时显示来自进程上下文（cwd/启动目录）的路径">
+            <input id="showProcessPaths" type="checkbox" />
+            <span class="track"><span class="thumb"></span></span>
+            <span class="switch-label">显示进程上下文</span>
+          </label>
+        </header>
         <div id="documents" class="card-list empty">暂无路径</div>
       </section>
 

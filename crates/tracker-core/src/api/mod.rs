@@ -1,4 +1,4 @@
-use crate::models::TrackerEvent;
+use crate::models::{BrowserTab, TrackerEvent};
 use crate::state::TrackerState;
 use anyhow::{anyhow, Context};
 use async_stream::stream;
@@ -14,6 +14,8 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -25,12 +27,30 @@ const PORT_FALLBACK_RANGE: u16 = 5;
 #[derive(Debug)]
 pub struct ServerHandle {
     pub addr: SocketAddr,
+    pub bridge_token: Arc<String>,
+    pub bridge_token_path: PathBuf,
     pub task: JoinHandle<()>,
 }
 
-pub async fn spawn_api(state: TrackerState, host: &str, port: u16) -> anyhow::Result<ServerHandle> {
+#[derive(Clone)]
+pub(crate) struct ApiState {
+    pub tracker: TrackerState,
+    pub bridge_token: Arc<String>,
+}
+
+pub async fn spawn_api(
+    state: TrackerState,
+    host: &str,
+    port: u16,
+    bridge_token: Arc<String>,
+    bridge_token_path: PathBuf,
+) -> anyhow::Result<ServerHandle> {
     let addr = bind_with_fallback(host, port).await?;
-    let app = router(state);
+    let api_state = ApiState {
+        tracker: state,
+        bridge_token: bridge_token.clone(),
+    };
+    let app = router(api_state);
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("bind API listener on {addr}"))?;
@@ -42,19 +62,27 @@ pub async fn spawn_api(state: TrackerState, host: &str, port: u16) -> anyhow::Re
     });
     Ok(ServerHandle {
         addr: actual_addr,
+        bridge_token,
+        bridge_token_path,
         task,
     })
 }
 
-fn router(state: TrackerState) -> Router {
+fn router(state: ApiState) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/screenshot", get(screenshot))
         .route("/api/v1/events", get(events_sse))
         .route("/api/v1/ws", get(events_ws))
+        .route("/api/v1/browser", get(browser_ws))
+        .route("/api/v1/bridge_token", get(bridge_token_handler))
         .route("/api/v1/pause", get(pause_status).post(set_pause))
         .route("/api/v1/capture", get(capture_status).post(set_capture))
+        .route(
+            "/api/v1/show_process_paths",
+            get(show_process_paths_status).post(set_show_process_paths),
+        )
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -63,12 +91,12 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok": true, "service": "apptracker"}))
 }
 
-async fn snapshot(State(state): State<TrackerState>) -> Json<crate::models::Snapshot> {
-    Json(state.snapshot().await)
+async fn snapshot(State(state): State<ApiState>) -> Json<crate::models::Snapshot> {
+    Json(state.tracker.snapshot().await)
 }
 
-async fn screenshot(State(state): State<TrackerState>) -> Response {
-    match state.latest_screenshot().await {
+async fn screenshot(State(state): State<ApiState>) -> Response {
+    match state.tracker.latest_screenshot().await {
         Some(png) => {
             let mut headers = HeaderMap::new();
             headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
@@ -79,9 +107,9 @@ async fn screenshot(State(state): State<TrackerState>) -> Response {
 }
 
 async fn events_sse(
-    State(state): State<TrackerState>,
+    State(state): State<ApiState>,
 ) -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
-    let mut rx = state.subscribe();
+    let mut rx = state.tracker.subscribe();
     let events = stream! {
         loop {
             match rx.recv().await {
@@ -111,8 +139,8 @@ async fn events_sse(
     )
 }
 
-async fn events_ws(ws: WebSocketUpgrade, State(state): State<TrackerState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_client(socket, state))
+async fn events_ws(ws: WebSocketUpgrade, State(state): State<ApiState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| ws_client(socket, state.tracker.clone()))
 }
 
 async fn ws_client(mut socket: WebSocket, state: TrackerState) {
@@ -162,6 +190,83 @@ async fn ws_client(mut socket: WebSocket, state: TrackerState) {
     }
 }
 
+async fn browser_ws(ws: WebSocketUpgrade, State(state): State<ApiState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| browser_client(socket, state))
+}
+
+async fn browser_client(mut socket: WebSocket, state: ApiState) {
+    use futures_util::SinkExt;
+
+    let Some(Ok(Message::Text(raw))) = socket.next().await else {
+        return;
+    };
+    let Ok(auth) = serde_json::from_str::<AuthMessage>(&raw) else {
+        let _ = socket.close().await;
+        return;
+    };
+    if auth.token.trim() != state.bridge_token.as_str() {
+        let _ = socket.close().await;
+        return;
+    }
+    while let Some(msg) = socket.next().await {
+        match msg {
+            Ok(Message::Text(raw)) => {
+                if state.tracker.is_paused() {
+                    continue;
+                }
+                if let Ok(update) = serde_json::from_str::<TabUpdate>(&raw) {
+                    if update.message_type == "tab_update" {
+                        state.tracker.update_browser_tab(update.into_tab()).await;
+                    }
+                }
+            }
+            Ok(Message::Close(_)) | Err(_) => break,
+            _ => {}
+        }
+    }
+}
+
+async fn bridge_token_handler(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "token": state.bridge_token.as_str() }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthMessage {
+    token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TabUpdate {
+    #[serde(rename = "type")]
+    message_type: String,
+    browser: Option<String>,
+    pid: Option<u32>,
+    #[serde(rename = "windowId")]
+    window_id: Option<i64>,
+    #[serde(rename = "tabId")]
+    tab_id: Option<i64>,
+    url: Option<String>,
+    title: Option<String>,
+    #[serde(rename = "favIconUrl")]
+    favicon_url: Option<String>,
+    active: Option<bool>,
+}
+
+impl TabUpdate {
+    fn into_tab(self) -> BrowserTab {
+        BrowserTab {
+            browser: self.browser.unwrap_or_else(|| "chrome".to_string()),
+            pid: self.pid,
+            window_id: self.window_id,
+            tab_id: self.tab_id,
+            url: self.url.unwrap_or_default(),
+            title: self.title.unwrap_or_default(),
+            favicon_url: self.favicon_url,
+            is_active: self.active.unwrap_or(true),
+        }
+    }
+}
+
 async fn send_json(socket: &mut WebSocket, event: &TrackerEvent) -> anyhow::Result<()> {
     let json = serde_json::to_string(event)?;
     socket
@@ -170,8 +275,8 @@ async fn send_json(socket: &mut WebSocket, event: &TrackerEvent) -> anyhow::Resu
         .map_err(|exc| anyhow!(exc))
 }
 
-async fn pause_status(State(state): State<TrackerState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({"paused": state.is_paused()}))
+async fn pause_status(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"paused": state.tracker.is_paused()}))
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,15 +285,15 @@ struct PauseBody {
 }
 
 async fn set_pause(
-    State(state): State<TrackerState>,
+    State(state): State<ApiState>,
     Json(body): Json<PauseBody>,
 ) -> Json<serde_json::Value> {
-    state.set_paused(body.paused);
+    state.tracker.set_paused(body.paused);
     Json(serde_json::json!({"paused": body.paused}))
 }
 
-async fn capture_status(State(state): State<TrackerState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({"enabled": state.is_capture_enabled()}))
+async fn capture_status(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"enabled": state.tracker.is_capture_enabled()}))
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,13 +302,30 @@ struct CaptureBody {
 }
 
 async fn set_capture(
-    State(state): State<TrackerState>,
+    State(state): State<ApiState>,
     Json(body): Json<CaptureBody>,
 ) -> Json<serde_json::Value> {
-    state.set_capture_enabled(body.enabled);
+    state.tracker.set_capture_enabled(body.enabled);
     if !body.enabled {
-        state.clear_screenshot().await;
+        state.tracker.clear_screenshot().await;
     }
+    Json(serde_json::json!({"enabled": body.enabled}))
+}
+
+async fn show_process_paths_status(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"enabled": state.tracker.show_process_paths()}))
+}
+
+#[derive(Debug, Deserialize)]
+struct ShowProcessPathsBody {
+    enabled: bool,
+}
+
+async fn set_show_process_paths(
+    State(state): State<ApiState>,
+    Json(body): Json<ShowProcessPathsBody>,
+) -> Json<serde_json::Value> {
+    state.tracker.set_show_process_paths(body.enabled);
     Json(serde_json::json!({"enabled": body.enabled}))
 }
 

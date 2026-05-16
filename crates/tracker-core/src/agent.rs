@@ -1,9 +1,9 @@
 use crate::activity::spawn_activity_monitor;
 use crate::api::{spawn_api, ServerHandle};
-use crate::bridge::{spawn_browser_bridge, BrowserBridgeHandle};
+use crate::bridge::load_or_create_token;
 use crate::capture::spawn_screen_capture;
 use crate::integrations::enrich_window;
-use crate::models::{DocumentSource, WindowInfo};
+use crate::models::{DocumentCategory, DocumentSource, WindowInfo};
 use crate::platform::active_window;
 use crate::state::TrackerState;
 use crate::tools::{dedupe_documents, likely_document_name_from_title};
@@ -17,11 +17,9 @@ use tokio::task::JoinHandle;
 pub struct AgentConfig {
     pub host: String,
     pub api_port: u16,
-    pub browser_port: u16,
     pub no_activity: bool,
     pub no_capture: bool,
     pub capture_default_on: bool,
-    pub no_browser_bridge: bool,
     pub poll_interval_ms: u64,
 }
 
@@ -30,11 +28,9 @@ impl Default for AgentConfig {
         Self {
             host: "127.0.0.1".to_string(),
             api_port: 5007,
-            browser_port: 5006,
             no_activity: false,
             no_capture: false,
             capture_default_on: false,
-            no_browser_bridge: false,
             poll_interval_ms: 250,
         }
     }
@@ -43,18 +39,20 @@ impl Default for AgentConfig {
 pub struct AgentHandle {
     pub state: TrackerState,
     pub api: ServerHandle,
-    pub browser_bridge: Option<BrowserBridgeHandle>,
     pub window_task: JoinHandle<()>,
 }
 
 pub async fn start_agent(config: AgentConfig) -> anyhow::Result<AgentHandle> {
     let state = TrackerState::new();
-    let api = spawn_api(state.clone(), &config.host, config.api_port).await?;
-    let browser_bridge = if config.no_browser_bridge {
-        None
-    } else {
-        Some(spawn_browser_bridge(state.clone(), &config.host, config.browser_port).await?)
-    };
+    let (token_path, token) = load_or_create_token().await?;
+    let api = spawn_api(
+        state.clone(),
+        &config.host,
+        config.api_port,
+        Arc::new(token),
+        token_path,
+    )
+    .await?;
 
     if !config.no_activity {
         spawn_activity_monitor(state.clone(), 60);
@@ -68,7 +66,6 @@ pub async fn start_agent(config: AgentConfig) -> anyhow::Result<AgentHandle> {
     Ok(AgentHandle {
         state,
         api,
-        browser_bridge,
         window_task,
     })
 }
@@ -225,6 +222,7 @@ impl DocumentMemory {
             kind: "file".to_string(),
             source: "title_memory".to_string(),
             confidence: 0.88,
+            category: DocumentCategory::User,
         });
     }
 }

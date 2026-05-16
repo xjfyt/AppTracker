@@ -1,9 +1,11 @@
 let apiBase = document.querySelector("#apiBase").value.replace(/\/$/, "");
 let paused = false;
 let captureEnabled = false;
+let showProcessPaths = false;
 let ws = null;
 let reconnectTimer = null;
 let lastScreenshotRefresh = 0;
+let latestDocuments = [];
 
 const statusEl = document.querySelector("#status");
 const pauseBtn = document.querySelector("#pauseBtn");
@@ -12,6 +14,7 @@ const captureBadge = document.querySelector("#captureBadge");
 const screenshotEl = document.querySelector("#screenshot");
 const screenshotHint = document.querySelector("#screenshotHint");
 const appBadge = document.querySelector("#appBadge");
+const showProcessToggle = document.querySelector("#showProcessPaths");
 const lightbox = document.querySelector("#lightbox");
 const lightboxImg = document.querySelector("#lightboxImg");
 const lightboxClose = document.querySelector(".lightbox-close");
@@ -43,6 +46,17 @@ captureToggle.addEventListener("change", async (ev) => {
   applyCaptureState(enabled);
 });
 
+showProcessToggle.addEventListener("change", async (ev) => {
+  const enabled = ev.target.checked;
+  await fetch(`${apiBase}/api/v1/show_process_paths`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  }).catch(() => {});
+  applyShowProcessPaths(enabled);
+  renderDocuments(latestDocuments);
+});
+
 screenshotEl.addEventListener("dblclick", () => {
   if (!screenshotEl.src || screenshotEl.classList.contains("hidden")) return;
   lightboxImg.src = screenshotEl.src;
@@ -68,6 +82,11 @@ function renderPaused() {
   pauseBtn.classList.toggle("paused", paused);
 }
 
+function applyShowProcessPaths(enabled) {
+  showProcessPaths = !!enabled;
+  showProcessToggle.checked = showProcessPaths;
+}
+
 function applyCaptureState(enabled) {
   captureEnabled = !!enabled;
   captureToggle.checked = captureEnabled;
@@ -90,6 +109,7 @@ async function loadSnapshot() {
   paused = !!snap.paused;
   renderPaused();
   applyCaptureState(!!snap.capture_enabled);
+  applyShowProcessPaths(!!snap.show_process_paths);
   renderSnapshot(snap);
 }
 
@@ -134,11 +154,16 @@ function connect() {
     if (msg.type === "capture_changed") {
       applyCaptureState(!!msg.data);
     }
+    if (msg.type === "show_process_paths_changed") {
+      applyShowProcessPaths(!!msg.data);
+      renderDocuments(latestDocuments);
+    }
   };
 }
 
 function renderSnapshot(snap) {
   if (typeof snap.capture_enabled === "boolean") applyCaptureState(snap.capture_enabled);
+  if (typeof snap.show_process_paths === "boolean") applyShowProcessPaths(snap.show_process_paths);
   if (snap.window) renderWindow(snap.window);
   if (snap.activity) renderActivity(snap.activity);
   if (snap.browser_tab) renderBrowser(snap.browser_tab);
@@ -186,24 +211,43 @@ function renderGrid(selector, rows) {
 }
 
 function renderDocuments(docs) {
+  latestDocuments = docs || [];
   const el = document.querySelector("#documents");
-  if (!docs.length) {
+  const visible = latestDocuments.filter((d) => showProcessPaths || categoryOf(d) !== "process");
+  const hiddenProcessCount = latestDocuments.length - visible.length;
+
+  if (!visible.length) {
     el.className = "card-list empty";
     htmlCache.delete(el);
-    el.textContent = "暂无路径";
+    el.textContent = hiddenProcessCount
+      ? `暂无用户文档（已隐藏 ${hiddenProcessCount} 条进程上下文路径）`
+      : "暂无路径";
     return;
   }
   el.className = "card-list";
-  setHtml(el, docs.map((d) => `
-    <div class="card">
-      <div class="mono">${escapeHtml(d.path)}</div>
-      <div class="card-row">
-        <span class="chip chip-kind">${escapeHtml(d.kind)}</span>
-        <span class="chip chip-source">${escapeHtml(d.source)}</span>
-        <span class="chip ${confidenceChipClass(d.confidence)}">置信度 ${formatPercent(d.confidence)}</span>
+  const cards = visible.map((d) => {
+    const cat = categoryOf(d);
+    return `
+      <div class="card">
+        <div class="mono">${escapeHtml(d.path)}</div>
+        <div class="card-row">
+          <span class="chip ${cat === "process" ? "chip-muted" : "chip-success"}">${cat === "process" ? "进程上下文" : "用户"}</span>
+          <span class="chip chip-kind">${escapeHtml(d.kind)}</span>
+          <span class="chip chip-source">${escapeHtml(d.source)}</span>
+          <span class="chip ${confidenceChipClass(d.confidence)}">置信度 ${formatPercent(d.confidence)}</span>
+        </div>
       </div>
-    </div>
-  `).join(""));
+    `;
+  }).join("");
+  const footer = hiddenProcessCount && !showProcessPaths
+    ? `<div class="muted" style="margin-top: 4px;">已隐藏 ${hiddenProcessCount} 条进程上下文路径（cwd/启动目录）。开启右上方开关可查看。</div>`
+    : "";
+  setHtml(el, cards + footer);
+}
+
+function categoryOf(doc) {
+  if (doc && typeof doc.category === "string") return doc.category;
+  return "user";
 }
 
 function renderActivity(stats) {

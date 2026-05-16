@@ -37,8 +37,9 @@ pub async fn enrich_window(info: WindowInfo) -> WindowInfo {
   - `shell_files::read_shell_cwds` 在采集时按 pid 反查这些文件。
 - `install_windows.ps1` 注入 profile，`install_windows.cmd` 注册 AutoRun。卸载就是反向删除。
 
-## 浏览器扩展（bridge.rs）
+## 浏览器扩展（同端口的 `/api/v1/browser`）
 
-- 启动浏览器桥时生成 `bridge.token` 文件（仅 owner 可读），扩展把 token 写进自己的 storage 一次。
-- WS 握手在 `Authorization: Bearer <token>` 头里校验。
-- 协议：扩展每次 active tab 变化发 `{type:"active_tab", tab:{...}}`，桥转写 `state.update_browser_tab` → 触发 `browser_tab_updated` 事件。
+- agent 启动时 `bridge::load_or_create_token` 读取（或生成）`~/.apptracker/token`；如果用户来自老版本，会自动从 `~/.active_tracker/token` 迁移过来。
+- 扩展首次启动会调 `GET /api/v1/bridge_token` 自动同步 token，用户也可以在 popup 里手动「Sync」一次；不再需要手工粘贴文件内容。
+- WS 连上 `/api/v1/browser` 后第一帧必须是 `{"token": "<bridge_token>"}`，校验失败立即断开。
+- 协议：扩展每次 active tab 变化发 `{"type":"tab_update", "browser":"...", "windowId":..., "tabId":..., "url":"...", "title":"...", ...}`，桥转写 `state.update_browser_tab` → 触发 `browser_tab_updated` 事件。

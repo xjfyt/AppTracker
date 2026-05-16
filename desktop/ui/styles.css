@@ -138,6 +138,10 @@ button, input { font: inherit; }
 .switch input:checked + .track { background: var(--accent); }
 .switch input:checked + .track .thumb { transform: translateX(16px); }
 .switch .switch-label { color: #334155; }
+.switch.tiny .track { width: 30px; height: 16px; }
+.switch.tiny .thumb { width: 12px; height: 12px; }
+.switch.tiny input:checked + .track .thumb { transform: translateX(14px); }
+.switch.tiny .switch-label { font-size: 12px; }
 
 .layout {
   display: grid;

@@ -19,6 +19,7 @@ pub struct TrackerState {
     tx: broadcast::Sender<TrackerEvent>,
     paused: Arc<AtomicBool>,
     capture_enabled: Arc<AtomicBool>,
+    show_process_paths: Arc<AtomicBool>,
 }
 
 impl TrackerState {
@@ -29,6 +30,7 @@ impl TrackerState {
             tx,
             paused: Arc::new(AtomicBool::new(false)),
             capture_enabled: Arc::new(AtomicBool::new(false)),
+            show_process_paths: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -62,6 +64,19 @@ impl TrackerState {
         self.inner.write().await.latest_screenshot_png = None;
     }
 
+    pub fn show_process_paths(&self) -> bool {
+        self.show_process_paths.load(Ordering::Relaxed)
+    }
+
+    pub fn set_show_process_paths(&self, value: bool) {
+        let prev = self.show_process_paths.swap(value, Ordering::Relaxed);
+        if prev != value {
+            let _ = self
+                .tx
+                .send(TrackerEvent::new("show_process_paths_changed", &value));
+        }
+    }
+
     pub async fn snapshot(&self) -> Snapshot {
         let inner = self.inner.read().await;
         Snapshot {
@@ -71,6 +86,7 @@ impl TrackerState {
             has_screenshot: inner.latest_screenshot_png.is_some(),
             paused: self.is_paused(),
             capture_enabled: self.is_capture_enabled(),
+            show_process_paths: self.show_process_paths(),
         }
     }
 

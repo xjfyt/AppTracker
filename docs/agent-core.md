@@ -6,8 +6,8 @@
 
 ```rust
 let state = TrackerState::new();
-spawn_api(state.clone(), host, api_port);           // REST/WS
-spawn_browser_bridge(state.clone(), host, browser_port); // 可选
+let (token_path, token) = bridge::load_or_create_token().await?;
+spawn_api(state.clone(), host, api_port, Arc::new(token), token_path); // REST/WS + browser
 if !config.no_activity { spawn_activity_monitor(...); }
 if !config.no_capture {
     state.set_capture_enabled(config.capture_default_on); // 默认 false
@@ -16,7 +16,7 @@ if !config.no_capture {
 spawn_window_monitor(state.clone(), config.poll_interval_ms);
 ```
 
-`AgentConfig` 默认值见 `agent.rs::AgentConfig::default`：API 5007，浏览器桥 5006，poll 250ms，`capture_default_on=false`。
+`AgentConfig` 默认值见 `agent.rs::AgentConfig::default`：API 5007（同时承载浏览器桥），poll 250 ms，`capture_default_on=false`。整个 agent 只暴露一个端口，浏览器扩展、UI、第三方共用。
 
 ## 窗口轮询
 

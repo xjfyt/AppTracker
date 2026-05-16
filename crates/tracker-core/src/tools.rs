@@ -1,4 +1,4 @@
-use crate::models::DocumentSource;
+use crate::models::{DocumentCategory, DocumentSource};
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -58,6 +58,7 @@ pub fn document_from_existing_path(
     path: &str,
     source: &str,
     confidence: f32,
+    category: DocumentCategory,
 ) -> Option<DocumentSource> {
     let path = normalize_candidate_path(path)?;
     if !is_interesting_path(&path) {
@@ -72,7 +73,37 @@ pub fn document_from_existing_path(
         kind,
         source: source.to_string(),
         confidence,
+        category,
     })
+}
+
+/// 判断 `path` 是否落在 `dir` 目录树内（含 dir 自身）。Windows 下大小写不敏感。
+pub fn path_under(path: &str, dir: &str) -> bool {
+    if path.is_empty() || dir.is_empty() {
+        return false;
+    }
+    let p = normalize_compare(path);
+    let d = normalize_compare(dir);
+    if d.is_empty() {
+        return false;
+    }
+    if p == d {
+        return true;
+    }
+    let needle = if d.ends_with('/') { d.clone() } else { format!("{}/", d) };
+    p.starts_with(&needle)
+}
+
+fn normalize_compare(s: &str) -> String {
+    let mut out = s.replace('\\', "/");
+    while out.ends_with('/') {
+        out.pop();
+    }
+    if cfg!(windows) {
+        out.to_lowercase()
+    } else {
+        out
+    }
 }
 
 pub fn normalize_candidate_path(raw: &str) -> Option<String> {
@@ -352,7 +383,9 @@ mod tests {
             .unwrap()
             .join("active_tracker_知识库演进.md");
         std::fs::write(&path, "# test").unwrap();
-        let doc = document_from_existing_path(&path.to_string_lossy(), "test", 1.0).unwrap();
+        let doc =
+            document_from_existing_path(&path.to_string_lossy(), "test", 1.0, DocumentCategory::User)
+                .unwrap();
         assert!(doc.path.contains("知识库演进.md"));
         assert_eq!(doc.kind, "file");
         let _ = std::fs::remove_file(path);

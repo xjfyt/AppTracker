@@ -2,9 +2,10 @@ pub mod file_manager;
 pub mod shell_files;
 pub mod terminal;
 
-use crate::models::{DocumentSource, FileManagerState, TerminalContext, WindowInfo};
+use crate::models::{DocumentCategory, DocumentSource, FileManagerState, TerminalContext, WindowInfo};
 use crate::platform::enrich_platform_window_documents;
-use crate::tools::{classify_path, dedupe_documents};
+use crate::tools::{classify_path, dedupe_documents, path_under};
+use std::path::Path;
 
 pub async fn enrich_window(mut info: WindowInfo) -> WindowInfo {
     info = enrich_platform_window_documents(info).await;
@@ -13,7 +14,23 @@ pub async fn enrich_window(mut info: WindowInfo) -> WindowInfo {
     info.file_manager_state = fm;
     info.terminal_context = term;
     merge_into_document_paths(&mut info);
+    drop_paths_inside_install_dir(&mut info);
     info
+}
+
+/// 任何落在进程自身可执行文件所在目录（及其子目录）里的文档都视为安装目录噪声。
+fn drop_paths_inside_install_dir(info: &mut WindowInfo) {
+    let Some(exe) = info.process.as_ref().and_then(|p| p.executable.as_deref()) else {
+        return;
+    };
+    let Some(dir) = Path::new(exe).parent() else {
+        return;
+    };
+    let dir = dir.to_string_lossy().to_string();
+    if dir.is_empty() {
+        return;
+    }
+    info.document_paths.retain(|d| !path_under(&d.path, &dir));
 }
 
 fn merge_into_document_paths(info: &mut WindowInfo) {
@@ -36,6 +53,7 @@ fn merge_into_document_paths(info: &mut WindowInfo) {
                     kind: "folder".to_string(),
                     source: "file_manager".to_string(),
                     confidence: if window.is_active { 0.95 } else { 0.7 },
+                    category: DocumentCategory::User,
                 });
             }
             for selected in &window.selected_items {
@@ -52,6 +70,7 @@ fn merge_into_document_paths(info: &mut WindowInfo) {
                     kind,
                     source: "file_manager_selection".to_string(),
                     confidence: if window.is_active { 0.95 } else { 0.7 },
+                    category: DocumentCategory::User,
                 });
             }
         }
@@ -75,6 +94,7 @@ fn merge_into_document_paths(info: &mut WindowInfo) {
                 } else {
                     0.8
                 },
+                category: DocumentCategory::User,
             });
         }
     }

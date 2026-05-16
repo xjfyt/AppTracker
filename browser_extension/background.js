@@ -1,16 +1,40 @@
-// Active Tracker bridge: streams active tab metadata to the local Rust agent.
+// AppTracker bridge: streams active tab metadata to the local AppTracker app.
 // Same code works on Chrome / Edge / Brave / Arc / Firefox MV3.
 
-const WS_URL = "ws://127.0.0.1:5006";
+const DEFAULT_API_BASE = "http://127.0.0.1:5007";
+let apiBase = DEFAULT_API_BASE;
 let ws = null;
 let token = null;
 let reconnectDelay = 1000;
 let pausedByUser = false;
 
+function wsUrl() {
+  return apiBase.replace(/^http/i, "ws").replace(/\/$/, "") + "/api/v1/browser";
+}
+
+async function fetchTokenFromHost() {
+  try {
+    const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/v1/bridge_token`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && typeof data.token === "string" && data.token) return data.token;
+  } catch (e) {}
+  return null;
+}
+
 async function loadState() {
-  const s = await chrome.storage.local.get(["token", "paused"]);
+  const s = await chrome.storage.local.get(["token", "paused", "apiBase"]);
   token = s.token || null;
   pausedByUser = !!s.paused;
+  apiBase = (s.apiBase || DEFAULT_API_BASE).replace(/\/$/, "");
+
+  if (!token) {
+    const fetched = await fetchTokenFromHost();
+    if (fetched) {
+      token = fetched;
+      await chrome.storage.local.set({ token });
+    }
+  }
 }
 
 function detectBrowser() {
@@ -40,11 +64,19 @@ function connect() {
   }
   if (!token) {
     setBadge("err");
-    console.warn("[ActiveTracker] No token configured. Open popup to set.");
+    console.warn("[AppTracker] No token yet. Will retry — start AppTracker, the token auto-syncs.");
+    fetchTokenFromHost().then(async (t) => {
+      if (t) {
+        token = t;
+        await chrome.storage.local.set({ token: t });
+        connect();
+      }
+    });
+    scheduleReconnect();
     return;
   }
   try {
-    ws = new WebSocket(WS_URL);
+    ws = new WebSocket(wsUrl());
   } catch (e) {
     setBadge("err");
     scheduleReconnect();
@@ -113,6 +145,7 @@ chrome.alarms.onAlarm.addListener(() => {
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.token) token = changes.token.newValue || null;
   if (changes.paused) pausedByUser = !!changes.paused.newValue;
+  if (changes.apiBase) apiBase = (changes.apiBase.newValue || DEFAULT_API_BASE).replace(/\/$/, "");
   try {
     if (ws) ws.close();
   } catch (e) {}

@@ -1,5 +1,5 @@
 use super::{collect_title_and_cwd_documents, process_info};
-use crate::models::{DocumentSource, WindowGeometry, WindowInfo};
+use crate::models::{DocumentCategory, DocumentSource, WindowGeometry, WindowInfo};
 use crate::tools::{dedupe_documents, document_from_existing_path};
 use anyhow::Context;
 use std::process::{Command, Stdio};
@@ -273,12 +273,19 @@ fn parse_document_lines(text: &str, confidence: f32) -> Vec<DocumentSource> {
         } else {
             confidence
         };
-        if let Some(doc) = document_from_existing_path(value, source, confidence) {
+        if let Some(doc) =
+            document_from_existing_path(value, source, confidence, DocumentCategory::User)
+        {
             out.push(doc);
             continue;
         }
         for candidate in crate::tools::extract_paths_from_title(value) {
-            if let Some(doc) = document_from_existing_path(&candidate, source, confidence) {
+            if let Some(doc) = document_from_existing_path(
+                &candidate,
+                source,
+                confidence,
+                DocumentCategory::User,
+            ) {
                 out.push(doc);
             }
         }
