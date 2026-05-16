@@ -1,35 +1,44 @@
 # Active Tracker
 
-Rust/Tauri 版 Active Tracker。底层核心是 headless Rust agent，负责窗口、进程、终端、文件管理器、浏览器桥、截图、键鼠活动聚合与本机 API；Tauri 只是一个读取 API 的页面。
+Rust/Tauri version of Active Tracker. The real core is a headless Rust agent; the Tauri app is only a page that consumes the local API.
 
-## 运行
+## One-command workflow
+
+Run these commands from the project root.
 
 ```powershell
-# headless agent，适合被你的软件作为 sidecar 启动
-cargo run -p tracker-agent -- --api-port 5007
-
-# Tauri 页面
-cd desktop
-npm install
+# Start the Tauri UI. The embedded Rust agent starts with it.
 npm run dev
+
+# Start only the headless agent, for sidecar integration.
+npm run agent
+
+# Build the release headless agent and the Tauri app in one command.
+npm run package
+
+# Format/check/test Rust code.
+npm run check
 ```
 
-构建：
+The first `npm run dev` or `npm run package` automatically installs the Tauri npm dependency under `desktop/`.
 
-```powershell
-cargo build -p tracker-agent
-cd desktop
-npm run build
+## Build outputs
+
+```text
+target/release/active-tracker-agent.exe
+target/release/active-tracker-tauri.exe
 ```
+
+On macOS/Linux the executable suffix differs, but the same commands apply.
 
 ## API
 
-默认监听：
+Default listeners:
 
 - API: `http://127.0.0.1:5007`
 - Browser bridge: `ws://127.0.0.1:5006`
 
-路由：
+Routes:
 
 - `GET /api/v1/health`
 - `GET /api/v1/snapshot`
@@ -38,15 +47,15 @@ npm run build
 - `GET /api/v1/ws`
 - `GET/POST /api/v1/pause`
 
-浏览器扩展仍使用 `~/.active_tracker/token` 鉴权；现有 `browser_extension/` 可继续连接。
+The browser extension still uses `~/.active_tracker/token` for authentication.
 
-## 平台能力
+## Platform capabilities
 
-- Windows: Win32 前台窗口、进程信息、cmdline/cwd 文档探测、Office/WPS COM 文档探测、UI Automation 文档探测、Explorer COM、终端进程树、shell cwd 文件、截图、键鼠活动。
-- macOS: System Events / AppleScript 前台窗口、Finder AppleScript、进程树、shell cwd 文件、截图、键鼠活动。仍需要 Accessibility / Input Monitoring / Automation 权限。
-- Linux: X11 下使用 `xdotool` / `xprop` / `xwininfo` 获取窗口信息；文件管理器为 cwd/title best-effort；Wayland 会返回受限提示。
+- Windows: Win32 foreground window, process info, cmdline/cwd document detection, Office/WPS COM document detection, UI Automation document detection, Explorer COM, terminal process tree, shell cwd files, screenshots, keyboard/mouse activity.
+- macOS: System Events / AppleScript foreground window, Finder AppleScript, process tree, shell cwd files, screenshots, keyboard/mouse activity. Requires Accessibility / Input Monitoring / Automation permissions.
+- Linux: X11 uses `xdotool` / `xprop` / `xwininfo`; file manager support is cwd/title best-effort. Wayland is limited by the desktop security model.
 
-## 接入建议
+## Integration advice
 
-上层软件优先把 `tracker-agent` 作为 sidecar 进程，通过 HTTP/SSE/WebSocket 消费状态。这样采集权限、平台差异和异常隔离都更容易处理。
+For another product, prefer launching `tracker-agent` as a sidecar process and consuming the local HTTP/SSE/WebSocket API. This keeps platform permissions and capture failures isolated from the host app.
 
