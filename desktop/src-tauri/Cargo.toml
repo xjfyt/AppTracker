@@ -10,7 +10,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tracker-core = { path = "../../crates/tracker-core" }
+tracker-core = { path = "../../tracker-core" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 

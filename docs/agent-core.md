@@ -2,7 +2,7 @@
 
 ## 入口：`start_agent`
 
-[`crates/tracker-core/src/agent.rs`](../crates/tracker-core/src/agent.rs) 内 `start_agent(config)` 拉起所有后台任务：
+[`tracker-core/src/agent.rs`](../tracker-core/src/agent.rs) 内 `start_agent(config)` 拉起所有后台任务：
 
 ```rust
 let state = TrackerState::new();
@@ -26,8 +26,9 @@ spawn_window_monitor(state.clone(), config.poll_interval_ms);
 2. 调 `active_window().await` 拿到当前前台窗口（平台分支详见 [platform.md](./platform.md)）。
 3. 用 `apply_document_memory` 把"标题里的纯文件名"回填为绝对路径。
 4. `fast_window_identity` 做轻量去重 key，识别变化才写 `state.update_window`。
-5. 富化任务通过 `tokio::sync::watch` 单坑队列异步触发——只关心"最新的一帧"。
-6. 富化 worker 调 `enrich_window` 拉文件管理器/终端/平台扩展，并再次校验前台没切走才发布。
+5. 写入前调 `carry_enrich_only_docs`：如果新一帧和上一帧是「同一个窗口」（window_id + pid + app_name 相同），就把先前富化得到的 `office:*` / `uia:*` / `file_manager*` / `terminal:*` 数据原样带过来。这样 WPS / Notepad 打字、翻页造成的标题闪动不会把已经探测好的文档路径冲掉。
+6. 富化任务通过 `tokio::sync::watch` 单坑队列异步触发——只关心"最新的一帧"。
+7. 富化 worker 调 `enrich_window` 拉文件管理器/终端/平台扩展。`should_publish_enriched` 只检查"窗口身份"（不含 title），避免 COM/UIA 还在跑的 ~1s 内 title 改了就被错判为过期。
 
 ## 文档记忆 `DocumentMemory`
 
@@ -43,7 +44,7 @@ spawn_window_monitor(state.clone(), config.poll_interval_ms);
 
 ## 状态与事件 `TrackerState`
 
-[`state.rs`](../crates/tracker-core/src/state.rs) 是所有共享状态的 owner：
+[`state.rs`](../tracker-core/src/state.rs) 是所有共享状态的 owner：
 
 - `Arc<RwLock<InnerState>>`：当前 window / activity / browser_tab / 最新截图 PNG。
 - `broadcast::Sender<TrackerEvent>`：事件总线，所有写操作都会发一条事件。

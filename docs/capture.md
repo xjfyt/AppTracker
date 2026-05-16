@@ -1,6 +1,6 @@
 # 截图功能
 
-实现：[`crates/tracker-core/src/capture.rs`](../crates/tracker-core/src/capture.rs)。
+实现：[`tracker-core/src/capture.rs`](../tracker-core/src/capture.rs)。
 
 ## 设计要点
 

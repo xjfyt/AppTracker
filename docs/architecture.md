@@ -24,10 +24,10 @@ AppTracker 由一个 Rust 采集核 + 多个轻量前端组成。核心运行在
 - API（HTTP/WS/SSE）
 - 浏览器扩展鉴权 + WS 端点 `/api/v1/browser`
 
-## 关键 crate / 目录
+## 关键目录
 
 ```
-crates/tracker-core/src
+tracker-core/src
 ├── activity.rs        全局键鼠 / 滚动 / idle 统计
 ├── agent.rs           启动入口、窗口轮询、文档记忆
 ├── api/mod.rs         axum 路由（REST/WS/SSE，含 browser 桥）

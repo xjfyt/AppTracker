@@ -11,11 +11,11 @@ pub async fn enrich_platform_window_documents(WindowInfo) -> WindowInfo;
 
 ## Windows
 
-[`platform/windows.rs`](../crates/tracker-core/src/platform/windows.rs)：
+[`platform/windows.rs`](../tracker-core/src/platform/windows.rs)：
 
 - `GetForegroundWindow` 拿 HWND → 标题、类名、矩形、PID/TID。
 - `process_info(pid)` 复用 `sysinfo` 一次性 refresh，避免每帧重建 System。
-- `collect_title_and_cwd_documents` 在 [`platform/mod.rs`](../crates/tracker-core/src/platform/mod.rs)：
+- `collect_title_and_cwd_documents` 在 [`platform/mod.rs`](../tracker-core/src/platform/mod.rs)：
   - 把命令行参数当 candidate 检查是否真实存在；
   - 用 `extract_paths_from_title` 解析标题里的可疑路径；
   - 把 cwd 加进 document_paths（低置信度 0.3）。
@@ -26,7 +26,7 @@ pub async fn enrich_platform_window_documents(WindowInfo) -> WindowInfo;
 
 ## macOS
 
-[`platform/macos.rs`](../crates/tracker-core/src/platform/macos.rs)：
+[`platform/macos.rs`](../tracker-core/src/platform/macos.rs)：
 
 - 走 Accessibility API + NSWorkspace：拿前台 App、bundle id、窗口几何。
 - AppleScript 桥用于浏览器/Office 的 doc 探测。
@@ -34,7 +34,7 @@ pub async fn enrich_platform_window_documents(WindowInfo) -> WindowInfo;
 
 ## Linux
 
-[`platform/linux.rs`](../crates/tracker-core/src/platform/linux.rs)：
+[`platform/linux.rs`](../tracker-core/src/platform/linux.rs)：
 
 - 用 X11/Wayland 工具拿前台窗口（依赖运行环境）。
 - 文件管理器主要走 D-Bus / `xdotool`，覆盖度比 macOS/Windows 弱。

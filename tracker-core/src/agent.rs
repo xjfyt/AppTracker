@@ -91,6 +91,14 @@ fn spawn_window_monitor(state: TrackerState, poll_interval_ms: u64) -> JoinHandl
                     let identity = fast_window_identity(&info);
                     if identity != last_identity {
                         last_identity = identity;
+                        // 把先前富化得到的 office / UIA / 文件管理器 / 终端 数据驮过来，
+                        // 否则一旦 WPS/Notepad 标题闪动（脏标记、页码变化等）就会
+                        // 被这条 basic-only 的更新覆盖掉。
+                        if let Some(current) = state.current_window().await {
+                            if same_window(&current, &info) {
+                                carry_enrich_only_docs(&current, &mut info);
+                            }
+                        }
                         state.update_window(info.clone()).await;
                     }
 
@@ -121,10 +129,10 @@ fn spawn_window_enrichment_worker(
             let Some(info) = rx.borrow_and_update().clone() else {
                 continue;
             };
-            let expected_key = foreground_match_key(&info);
+            let expected_window_key = window_identity_key(&info);
             let mut enriched = enrich_window(info).await;
             apply_document_memory(&document_memory, &mut enriched);
-            if should_publish_enriched(&state, &expected_key, &enriched).await {
+            if should_publish_enriched(&state, &expected_window_key, &enriched).await {
                 state.update_window(enriched).await;
             }
         }
@@ -133,13 +141,16 @@ fn spawn_window_enrichment_worker(
 
 async fn should_publish_enriched(
     state: &TrackerState,
-    expected_key: &str,
+    expected_window_key: &str,
     enriched: &WindowInfo,
 ) -> bool {
     let Some(current) = state.current_window().await else {
         return true;
     };
-    if foreground_match_key(&current) != expected_key {
+    // 只看「是不是同一个窗口」，不再卡 title——WPS/Office 在打字 / 翻页时标题
+    // 会持续变化，原先 foreground_match_key 含 title 会让 PowerShell COM 探测
+    // 的结果在落地前就被丢弃，导致检测时灵时不灵。
+    if window_identity_key(&current) != expected_window_key {
         return false;
     }
     fast_window_identity(&current) != fast_window_identity(enriched)
@@ -168,6 +179,50 @@ fn foreground_match_key(info: &WindowInfo) -> String {
         pid,
         info.window_title
     )
+}
+
+/// 与 [`foreground_match_key`] 的区别：不带 `window_title`。
+/// 用于「这条 enrich 结果是不是还属于同一个窗口」的判断，避免标题抖动
+/// 时富化结果被错判为过期。
+fn window_identity_key(info: &WindowInfo) -> String {
+    let pid = info.process.as_ref().map(|p| p.pid).unwrap_or_default();
+    format!(
+        "{}|{}|{}",
+        info.window_id.as_deref().unwrap_or_default(),
+        pid,
+        info.app_name
+    )
+}
+
+fn same_window(a: &WindowInfo, b: &WindowInfo) -> bool {
+    window_identity_key(a) == window_identity_key(b)
+}
+
+fn is_enrich_only_source(source: &str) -> bool {
+    source == "file_manager"
+        || source == "file_manager_selection"
+        || source.starts_with("terminal:")
+        || source.starts_with("office:")
+        || source.starts_with("uia:")
+}
+
+fn carry_enrich_only_docs(current: &WindowInfo, info: &mut WindowInfo) {
+    let mut carried = false;
+    for doc in &current.document_paths {
+        if is_enrich_only_source(&doc.source) {
+            info.document_paths.push(doc.clone());
+            carried = true;
+        }
+    }
+    if info.file_manager_state.is_none() && current.file_manager_state.is_some() {
+        info.file_manager_state = current.file_manager_state.clone();
+    }
+    if info.terminal_context.is_none() && current.terminal_context.is_some() {
+        info.terminal_context = current.terminal_context.clone();
+    }
+    if carried {
+        info.document_paths = dedupe_documents(std::mem::take(&mut info.document_paths));
+    }
 }
 
 #[derive(Default)]
