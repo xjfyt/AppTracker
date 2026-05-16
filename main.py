@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import signal
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -170,6 +172,28 @@ def main() -> None:
 
     QTimer.singleShot(0, _start_all)
 
+    # Ctrl+C 处理：Qt 的 C++ 事件循环阻塞 Python 的信号派发，光装 signal
+    # handler 没用。配一个 200ms 无操作的 QTimer 周期性把控制权交回 Python
+    # 解释器，handler 才能跑。装 SIGINT 后转成 app.quit() 走正常关闭流程。
+    def _on_sigint(*_args) -> None:
+        log.info("Received SIGINT, requesting quit")
+        app.quit()
+
+    signal.signal(signal.SIGINT, _on_sigint)
+    if hasattr(signal, "SIGBREAK"):   # Windows: Ctrl+Break
+        signal.signal(signal.SIGBREAK, _on_sigint)
+    _signal_pump = QTimer()
+    _signal_pump.timeout.connect(lambda: None)
+    _signal_pump.start(200)
+
+    def _hard_exit() -> None:
+        """优雅关闭的兜底：pynput / qasync IOCP proactor / aiohttp runner
+        在 Windows 上偶尔不肯彻底退出，让 Python 主线程返回也没用——
+        非守护线程会让 uv run 一直挂着。给 3s 优雅期，到点强退。"""
+        log.warning("Active Tracker hard-exit after grace period")
+        logging.shutdown()
+        os._exit(0)
+
     # 关闭前清理（loop 此时还活着）
     def _shutdown() -> None:
         log.info("Active Tracker shutting down")
@@ -183,6 +207,8 @@ def main() -> None:
             loop.create_task(api.stop())
         if api_task is not None and not api_task.done():
             api_task.cancel()
+        _signal_pump.stop()
+        QTimer.singleShot(3000, _hard_exit)
 
     app.aboutToQuit.connect(_shutdown)
 
