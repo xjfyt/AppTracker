@@ -22,7 +22,7 @@ class ScreenshotView(QFrame):
 
         self.image_lbl = QLabel("（等待截图）")
         self.image_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_lbl.setMinimumHeight(220)
+        self.image_lbl.setMinimumHeight(140)
         self.image_lbl.setObjectName("Screenshot")
         layout.addWidget(self.image_lbl, 1)
 

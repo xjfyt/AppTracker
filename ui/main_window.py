@@ -102,6 +102,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Active Tracker")
         self.resize(1180, 760)
+        # 显式给一个 ≤ 常见笔记本可用区域（1366×768 去掉任务栏 ~728px）的下限，
+        # 否则 layout 的隐式最小高度（>950px）在小屏上触发
+        # "QWindowsWindow::setGeometry: Unable to set geometry..." 警告
+        self.setMinimumSize(900, 560)
         self.monitor = monitor   # 可选：用于触发授权弹窗
 
         central = QWidget()

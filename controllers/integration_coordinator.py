@@ -13,6 +13,11 @@
                                               └──► UI 再次渲染（含 file_manager_state / terminal_context）
 
 UI 需要做幂等渲染（同一 WindowInfo 被两次 emit 都不出错）。
+
+周期刷新：terminal 用户 cd / Explorer 用户改选中项 → 这些都不会触发窗口
+focus / title / 几何变化，monitor 的 identity 去重会吞掉。所以协调器
+自己再起一个 1.5s 的 QTimer，在当前焦点窗口是 terminal/文件管理器时
+周期重跑集成查询；只有真正变化才再 emit 一次 window_changed。
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ import logging
 import os
 from typing import Optional
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 
 from common.models import (
     DocumentSource,
@@ -36,6 +41,8 @@ from tools.path_filter import classify_path, dedupe_documents
 
 log = logging.getLogger(__name__)
 
+REFRESH_INTERVAL_MS = 1500
+
 
 class IntegrationCoordinator(QObject):
     def __init__(self) -> None:
@@ -44,6 +51,13 @@ class IntegrationCoordinator(QObject):
         self.terminal = terminals.get_default()
         self._inflight: Optional[asyncio.Task] = None
         self._paused = False
+        # 周期刷新当前焦点窗口的 file_manager_state / terminal_context
+        self._current_info: Optional[WindowInfo] = None
+        self._last_state_key: tuple = ()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(REFRESH_INTERVAL_MS)
+        self._refresh_timer.timeout.connect(self._on_refresh_tick)
+        self._refresh_timer.start()
         bus.window_changed.connect(self.on_window_changed)
         bus.paused_changed.connect(self._on_paused)
 
@@ -56,6 +70,9 @@ class IntegrationCoordinator(QObject):
             return
         if self._paused:
             return
+        # 新窗口：记下来给周期 tick 用，state 指纹归零
+        self._current_info = info
+        self._last_state_key = ()
         # 上一个查询还没完，扔掉
         if self._inflight is not None and not self._inflight.done():
             self._inflight.cancel()
@@ -64,50 +81,106 @@ class IntegrationCoordinator(QObject):
         except RuntimeError:
             log.debug("no running event loop; skip enrich")
             return
-        self._inflight = loop.create_task(self._enrich(info))
+        self._inflight = loop.create_task(self._enrich(info, force_emit=True))
 
-    async def _enrich(self, info: WindowInfo) -> None:
+    def _on_refresh_tick(self) -> None:
+        if self._paused or self._current_info is None:
+            return
+        if self._inflight is not None and not self._inflight.done():
+            return   # 上次还没跑完，下次再说
         try:
-            # 文件管理器
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+        self._inflight = loop.create_task(self._enrich(self._current_info, force_emit=False))
+
+    async def _enrich(self, info: WindowInfo, force_emit: bool) -> None:
+        """跑一次集成查询；force_emit=True 来自新窗口（首次必发），
+        False 来自周期 tick（仅在状态变化时才 emit）。"""
+        try:
+            new_fm_state: Optional[FileManagerState] = None
+            new_term_ctx: Optional[TerminalContext] = None
+
             for fm in self.file_managers:
                 try:
                     if not fm.matches(info):
                         continue
                     state = await fm.query(info)
                     if state is not None and state.windows:
-                        info.file_manager_state = state
+                        new_fm_state = state
                     break
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     log.exception("file manager integration failed")
-                    bus.error_occurred.emit(
-                        fm.__class__.__name__, str(exc),
-                    )
+                    bus.error_occurred.emit(fm.__class__.__name__, str(exc))
 
-            # 终端
             try:
                 if self.terminal.matches(info):
                     ctx = await self.terminal.query(info)
                     if ctx is not None:
-                        info.terminal_context = ctx
+                        new_term_ctx = ctx
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.exception("terminal integration failed")
                 bus.error_occurred.emit("terminal_integration", str(exc))
 
-            if info.file_manager_state is not None or info.terminal_context is not None:
-                _merge_into_document_paths(info)
-                bus.window_changed.emit(info)
+            if new_fm_state is None and new_term_ctx is None:
+                return
+
+            new_key = _state_key(new_fm_state, new_term_ctx)
+            if not force_emit and new_key == self._last_state_key:
+                return   # 周期 tick 但状态没变，不打扰 UI
+            self._last_state_key = new_key
+
+            # 周期刷新场景下，info 是上一次首次 enrich 用过的对象，
+            # document_paths 里已经堆了上次的 file_manager_* / terminal:*
+            # 条目；直接覆盖 file_manager_state / terminal_context，
+            # _merge_into_document_paths 会先剥掉旧条目再加新的，不会累加。
+            info.file_manager_state = new_fm_state
+            info.terminal_context = new_term_ctx
+            _merge_into_document_paths(info)
+            bus.window_changed.emit(info)
         except asyncio.CancelledError:
             return
+
+
+def _state_key(
+    fm: Optional[FileManagerState], term: Optional[TerminalContext]
+) -> tuple:
+    """把当前集成查询结果折成一个可比较的指纹；变化判断用。"""
+    fm_part: tuple = ()
+    if fm is not None:
+        fm_part = tuple(
+            (w.folder, w.is_active, tuple(w.selected_items))
+            for w in fm.windows
+        )
+    term_part: tuple = ()
+    if term is not None:
+        # 只比较 shells（用户 cd 体现在这里），cmdline 变化不打扰 UI
+        term_part = tuple(
+            (sh.pid, sh.cwd) for sh in term.shells
+        )
+    return (fm_part, term_part)
 
 
 def _merge_into_document_paths(info: WindowInfo) -> None:
     """把集成查询到的"文件管理器当前文件夹/选中项"和"终端 shell 的 cwd"
     并入 info.document_paths，左侧"文档 / 路径"卡片才能看到这些路径，
-    否则它们只在右侧专属卡片里出现。"""
+    否则它们只在右侧专属卡片里出现。
+
+    周期刷新会调多次：先把上次自己加的条目（按 source 标签）剥掉，
+    再合并这次的，避免累加旧 cwd / 旧选中项。"""
+    base_paths = [
+        d for d in info.document_paths
+        if not (
+            d.source == "file_manager"
+            or d.source == "file_manager_selection"
+            or d.source.startswith("terminal:")
+        )
+    ]
+
     extras: list[DocumentSource] = []
 
     state: Optional[FileManagerState] = info.file_manager_state
@@ -123,7 +196,6 @@ def _merge_into_document_paths(info: WindowInfo) -> None:
             for sel in w.selected_items:
                 kind = classify_path(sel)
                 if kind == "unknown":
-                    # selected_items 来自 shell，路径多半真实存在
                     kind = "folder" if os.path.isdir(sel) else "file"
                 extras.append(DocumentSource(
                     path=sel,
@@ -134,7 +206,6 @@ def _merge_into_document_paths(info: WindowInfo) -> None:
 
     ctx: Optional[TerminalContext] = info.terminal_context
     if ctx is not None:
-        # 同一 cwd 多个 shell（拆分窗格）只显示一条
         seen_cwds: set[str] = set()
         for sh in ctx.shells:
             if not sh.cwd or sh.cwd in seen_cwds:
@@ -147,6 +218,4 @@ def _merge_into_document_paths(info: WindowInfo) -> None:
                 confidence=0.9 if sh.cwd_source == "shell_file" else 0.8,
             ))
 
-    if not extras:
-        return
-    info.document_paths = dedupe_documents(extras + list(info.document_paths))
+    info.document_paths = dedupe_documents(extras + base_paths)
