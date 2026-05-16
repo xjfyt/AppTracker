@@ -1,20 +1,9 @@
-# Python
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
+# Rust / Tauri
+target/
+desktop/node_modules/
+desktop/src-tauri/gen/
 
-# uv / venv
-.venv/
-
-# 日志（运行时若在工作目录写日志会落到这里）
+# Logs
 *.log
 tracker.log*
 
@@ -23,6 +12,6 @@ tracker.log*
 .vscode/
 *.swp
 
-# 系统
+# System
 .DS_Store
 Thumbs.db

@@ -8,21 +8,21 @@ async function refresh() {
     const text = document.getElementById("status-text");
     if (!resp) {
       dot.className = "dot err";
-      text.textContent = "后台未响应";
+      text.textContent = "Background unavailable";
       return;
     }
     if (resp.paused) {
       dot.className = "dot";
-      text.textContent = "已暂停";
+      text.textContent = "Paused";
     } else if (!resp.hasToken) {
       dot.className = "dot err";
-      text.textContent = "未配置 token";
+      text.textContent = "Token missing";
     } else if (resp.connected) {
       dot.className = "dot ok";
-      text.textContent = "已连接";
+      text.textContent = "Connected";
     } else {
       dot.className = "dot err";
-      text.textContent = "未连接";
+      text.textContent = "Disconnected";
     }
   });
 }
