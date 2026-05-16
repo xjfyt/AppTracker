@@ -88,6 +88,12 @@ def classify_path(path: str) -> str:
 
 _WIN_PATH_RE = re.compile(r"[A-Za-z]:\\[^<>:\"|?*\r\n]+")
 _POSIX_PATH_RE = re.compile(r"(?:~|/)[^\s\"'<>]+")
+# 抓 "文件名.扩展名"，不要求带路径。Typora/WPS/Word 之类的标题
+# 形如 "doc.md - Typora" / "report.docx - WPS文字" / "data.csv - Excel"，
+# 只暴露 basename。1~10 字符的扩展名足以涵盖常见文档类型，太长的判定为非扩展名。
+_FILENAME_RE = re.compile(
+    r"(?:^|[\s\-—|—])([^\\/:*?\"<>|\r\n]+\.[A-Za-z0-9]{1,10})(?=\s|$|[\-—|])"
+)
 
 
 def extract_paths_from_title(title: str) -> list[str]:
@@ -97,6 +103,26 @@ def extract_paths_from_title(title: str) -> list[str]:
     candidates.extend(_WIN_PATH_RE.findall(title))
     candidates.extend(_POSIX_PATH_RE.findall(title))
     return candidates
+
+
+def extract_filename_from_title(title: str) -> Optional[str]:
+    """从标题里抽出形如 doc.md / report.docx 的 basename；找不到返回 None。
+
+    Typora / WPS / Office / VS Code 之类的窗口标题大多是
+    "文件名.扩展名 - 应用名" 的格式，仅包含 basename。把这个 basename
+    跟 psutil.Process.open_files() 的句柄列表做匹配，就能锁定到具体的
+    完整路径，比靠 UIA / open_files 单独走可靠得多。"""
+    if not title:
+        return None
+    # 取第一个看起来像 file.ext 的候选；扩展名不能太短（< 1）也不能纯数字
+    for m in _FILENAME_RE.finditer(title):
+        cand = m.group(1).strip()
+        # 排除纯数字版本号 ("1.2.3")
+        ext = cand.rsplit(".", 1)[-1]
+        if ext.isdigit():
+            continue
+        return cand
+    return None
 
 
 def expand_user(path: str) -> str:

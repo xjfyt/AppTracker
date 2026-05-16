@@ -27,6 +27,7 @@ from common.models import (
 from tools.path_filter import (
     classify_path,
     dedupe_documents,
+    extract_filename_from_title,
     extract_paths_from_title,
     is_interesting_path,
 )
@@ -44,6 +45,16 @@ TITLE_SUFFIXES = [
 # Hook 触发后等多久才查询：把瞬时的事件流合成一次 query_now。
 # 浏览器切 tab / 缩放窗口会瞬时发几十个 NAMECHANGE，必须合并，否则主线程被打爆。
 HOOK_DEBOUNCE_MS = 80
+
+# 这些进程的 open_files() 永远是几百条 cache/cookies/扩展，对文档定位
+# 没意义，而且 NtQuerySystemInformation 在巨型进程上 300ms+，直接拉黑。
+OPEN_FILES_BLACKLIST = {
+    "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe",
+    "vivaldi.exe", "opera.exe", "arc.exe", "iexplore.exe",
+    # Electron 大户：VS Code / Discord / Slack 等也常 100+ 句柄
+    "code.exe", "discord.exe", "slack.exe", "teams.exe",
+    "explorer.exe",   # Explorer 走专用 COM 集成
+}
 
 
 def _file_description(exe: str) -> Optional[str]:
@@ -144,6 +155,13 @@ class WindowsMonitor(WindowMonitor):
         self._uia_cache_hwnd: Optional[int] = None
         self._uia_cache_paths: list[str] = []
         self._uia_inflight = False
+        # open_files() 用同样的"缓存 + fire-and-forget"模式：Typora / WPS /
+        # Office 这类编辑器把文件 hold 在句柄表里，是定位文档完整路径最直接
+        # 的办法（UIA 通常拿不到，title 只有 basename）。
+        self._files_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="open-files")
+        self._files_cache_hwnd: Optional[int] = None
+        self._files_cache_paths: list[str] = []
+        self._files_inflight = False
 
     def _on_hook_fired(self) -> None:
         if not self._debounce.isActive():
@@ -160,6 +178,7 @@ class WindowsMonitor(WindowMonitor):
         self._hook.wait(2000)
         self._debounce.stop()
         self._uia_pool.shutdown(wait=False)
+        self._files_pool.shutdown(wait=False)
 
     def query_now(self) -> WindowInfo:
         info = WindowInfo(platform="win32")
@@ -224,10 +243,11 @@ class WindowsMonitor(WindowMonitor):
             self._collect_via_uia(info, hwnd)
         if info.window_title:
             self._collect_from_title(info)
-        # 不调 psutil.open_files()：在 Windows 上它通过 NtQuerySystemInformation
-        # 遍历全系统句柄表，浏览器/Electron 进程上动辄 300ms+，且返回的多是
-        # 缓存/cookies/扩展文件，对用户没意义。文档路径靠 UIA + 标题 + 集成
-        # （Explorer/Terminal）足够了。
+        # Typora / WPS / Office 这类编辑器把当前文档作为句柄 hold 住，
+        # open_files() 是定位完整路径最直接的方式。同 UIA 一样后台跑、
+        # 缓存复用，绝不在主线程等。浏览器 / Electron 大户拉黑跳过。
+        if pid:
+            self._collect_open_files_async(info, hwnd, pid)
         if info.process and info.process.cwd:
             info.document_paths.append(
                 DocumentSource(
@@ -330,6 +350,72 @@ class WindowsMonitor(WindowMonitor):
             self._uia_inflight = False
 
         fut.add_done_callback(_store)
+
+    def _collect_open_files_async(self, info: WindowInfo, hwnd: int, pid: int) -> None:
+        """psutil.Process.open_files() 在 Windows 上靠 NtQuerySystemInformation
+        遍历全系统句柄表，慢。所以：浏览器/Electron 大户直接跳过；其他进程
+        用单线程池跑、缓存、fire-and-forget，绝不阻塞主线程。
+
+        若 window_title 里能抽出 basename（"doc.md - Typora"），
+        优先匹配同名句柄给 0.85 高置信度；其他句柄按 fd_scan 0.3 低置信度。"""
+        title_basename = extract_filename_from_title(info.window_title or "")
+
+        if self._files_cache_hwnd == hwnd:
+            for path in self._files_cache_paths:
+                conf = 0.3
+                if title_basename and os.path.basename(path).lower() == title_basename.lower():
+                    conf = 0.85
+                info.document_paths.append(
+                    DocumentSource(
+                        path=path, kind=classify_path(path),
+                        source="fd_scan", confidence=conf,
+                    )
+                )
+        else:
+            self._files_cache_hwnd = hwnd
+            self._files_cache_paths = []
+
+        # 黑名单进程跳过（仍然每次都查 process name —— 便宜）
+        proc_name_lc = (info.process.name or "").lower() if info.process else ""
+        if proc_name_lc in OPEN_FILES_BLACKLIST:
+            return
+
+        if self._files_inflight:
+            return
+        self._files_inflight = True
+        fut = self._files_pool.submit(self._open_files_walk, pid)
+
+        def _store(f, hwnd=hwnd) -> None:
+            try:
+                paths = f.result()
+            except Exception:
+                paths = []
+            if self._files_cache_hwnd == hwnd:
+                self._files_cache_paths = paths
+            self._files_inflight = False
+
+        fut.add_done_callback(_store)
+
+    @staticmethod
+    def _open_files_walk(pid: int) -> list[str]:
+        """worker 线程里跑的实际查询；保留过滤后"有意思"的路径。"""
+        try:
+            opened = psutil.Process(pid).open_files()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return []
+        results: list[str] = []
+        seen: set[str] = set()
+        for f in opened:
+            path = f.path
+            if not path or path in seen:
+                continue
+            if not is_interesting_path(path):
+                continue
+            seen.add(path)
+            results.append(path)
+            if len(results) >= 20:
+                break
+        return results
 
     def _uia_walk(self, hwnd: int) -> list[str]:
         auto = self._uia
