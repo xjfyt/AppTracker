@@ -6,7 +6,7 @@
   "scripts": {
     "setup": "npm --prefix desktop install",
     "dev": "npm --prefix desktop install && npm --prefix desktop run dev",
-    "package": "npm --prefix desktop install && npm --prefix desktop run build",
+    "build": "npm --prefix desktop install && npm --prefix desktop run build",
     "check": "cargo fmt --check && cargo check && cargo test -p tracker-core"
   }
 }
