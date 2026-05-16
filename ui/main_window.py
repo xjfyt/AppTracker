@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from common.models import ActivityStats, BrowserTab, WindowInfo
 from common.signals import bus
 from tools.shell_installer import install_powershell_integration
+from ui.assets import app_icon
 from ui.widgets.activity_card import ActivityCard
 from ui.widgets.app_card import AppCard
 from ui.widgets.browser_card import BrowserCard
@@ -122,6 +123,7 @@ class MainWindow(QMainWindow):
     def __init__(self, monitor=None):
         super().__init__()
         self.setWindowTitle("Active Tracker")
+        self.setWindowIcon(app_icon())
         self.resize(1180, 760)
         # 显式给一个 ≤ 常见笔记本可用区域（1366×768 去掉任务栏 ~728px）的下限，
         # 否则 layout 的隐式最小高度（>950px）在小屏上触发

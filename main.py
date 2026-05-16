@@ -31,7 +31,10 @@ from controllers.browser_bridge import BrowserBridge
 from controllers.integration_coordinator import IntegrationCoordinator
 from controllers.screen_capture import ScreenCapture
 from controllers.window_monitor import create_monitor
+from ui.assets import app_icon
 from ui.main_window import MainWindow
+
+APP_USER_MODEL_ID = "wxj.active-tracker"
 
 LOG_DIR = Path.home() / ".active_tracker"
 LOG_FILE = LOG_DIR / "tracker.log"
@@ -71,6 +74,19 @@ def load_style(app: QApplication) -> None:
         logging.warning("Failed to load stylesheet: %s", exc)
 
 
+def _set_windows_app_user_model_id(app_id: str) -> None:
+    """Windows 上必须在创建第一个窗口前调一次 SetCurrentProcessExplicitAppUserModelID，
+    否则 Python 解释器进程会和 python.exe 共用任务栏 icon / 分组，我们的 setWindowIcon
+    在任务栏上看不到。无该 API 的旧系统静默忽略。"""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception as exc:
+        logging.debug("SetCurrentProcessExplicitAppUserModelID failed: %s", exc)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Active Tracker")
     parser.add_argument("--debug", action="store_true", help="把日志同步打到 stderr")
@@ -88,8 +104,10 @@ def main() -> None:
     log = logging.getLogger("main")
     log.info("Active Tracker starting (platform=%s)", sys.platform)
 
+    _set_windows_app_user_model_id(APP_USER_MODEL_ID)
     app = QApplication(sys.argv)
     app.setApplicationName("Active Tracker")
+    app.setWindowIcon(app_icon())
     load_style(app)
 
     # qasync 让 websockets 与 Qt 共用同一个事件循环
