@@ -4,7 +4,7 @@ use crate::tools::{
     is_interesting_path, likely_document_name_from_title, normalize_path_lossy,
 };
 use std::path::{Path, PathBuf};
-use sysinfo::{Pid, System};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -19,6 +19,13 @@ pub use self::linux::active_window;
 pub use self::macos::active_window;
 #[cfg(target_os = "windows")]
 pub use self::windows::active_window;
+#[cfg(target_os = "windows")]
+pub use self::windows::enrich_platform_window_documents;
+
+#[cfg(not(target_os = "windows"))]
+pub async fn enrich_platform_window_documents(info: WindowInfo) -> WindowInfo {
+    info
+}
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub async fn active_window() -> anyhow::Result<WindowInfo> {
@@ -28,16 +35,26 @@ pub async fn active_window() -> anyhow::Result<WindowInfo> {
 }
 
 pub fn process_info(pid: u32) -> Option<ProcessInfo> {
-    let mut system = System::new_all();
-    system.refresh_all();
-    let proc_ = system.process(Pid::from_u32(pid))?;
+    let mut system = System::new();
+    let pid = Pid::from_u32(pid);
+    let pids = [pid];
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&pids),
+        true,
+        ProcessRefreshKind::nothing()
+            .with_exe(UpdateKind::Always)
+            .with_cmd(UpdateKind::Always)
+            .with_cwd(UpdateKind::Always)
+            .with_memory(),
+    );
+    let proc_ = system.process(pid)?;
     let cmdline = proc_
         .cmd()
         .iter()
         .map(|s| s.to_string_lossy().to_string())
         .collect::<Vec<_>>();
     Some(ProcessInfo {
-        pid,
+        pid: pid.as_u32(),
         name: proc_.name().to_string_lossy().to_string(),
         executable: proc_.exe().map(|p| normalize_path_lossy(p.to_path_buf())),
         cmdline,

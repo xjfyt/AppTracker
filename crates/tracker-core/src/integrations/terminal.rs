@@ -106,10 +106,14 @@ fn query_blocking(root_pid: u32) -> Option<TerminalContext> {
     let mut system = System::new_all();
     system.refresh_all();
     let shell_files = read_shell_cwds();
-    let descendants = descendants_of(&system, Pid::from_u32(root_pid));
+    let root = Pid::from_u32(root_pid);
+    let mut candidates = descendants_of(&system, root);
+    if !candidates.contains(&root) {
+        candidates.insert(0, root);
+    }
     let mut shells = Vec::new();
     let mut running = Vec::new();
-    for pid in descendants {
+    for pid in candidates {
         let Some(proc_) = system.process(pid) else {
             continue;
         };
@@ -142,7 +146,7 @@ fn query_blocking(root_pid: u32) -> Option<TerminalContext> {
         };
         if is_shell {
             shells.push(tp);
-        } else if !RUNNING_BLACKLIST_NAMES.iter().any(|s| *s == lower) {
+        } else if pid != root && !RUNNING_BLACKLIST_NAMES.iter().any(|s| *s == lower) {
             running.push(tp);
         }
     }

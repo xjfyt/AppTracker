@@ -3,9 +3,11 @@ pub mod shell_files;
 pub mod terminal;
 
 use crate::models::{DocumentSource, FileManagerState, TerminalContext, WindowInfo};
+use crate::platform::enrich_platform_window_documents;
 use crate::tools::{classify_path, dedupe_documents};
 
 pub async fn enrich_window(mut info: WindowInfo) -> WindowInfo {
+    info = enrich_platform_window_documents(info).await;
     let fm = file_manager::query(&info).await;
     let term = terminal::query(&info).await;
     info.file_manager_state = fm;

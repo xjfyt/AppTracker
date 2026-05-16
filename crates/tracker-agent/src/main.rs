@@ -17,7 +17,7 @@ struct Args {
     no_capture: bool,
     #[arg(long)]
     no_browser_bridge: bool,
-    #[arg(long, default_value_t = 500)]
+    #[arg(long, default_value_t = 250)]
     poll_interval_ms: u64,
 }
 

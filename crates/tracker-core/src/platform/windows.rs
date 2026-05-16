@@ -16,6 +16,25 @@ pub async fn active_window() -> anyhow::Result<WindowInfo> {
         .context("join windows active window query")?
 }
 
+pub async fn enrich_platform_window_documents(mut info: WindowInfo) -> WindowInfo {
+    let hwnd_id = info
+        .window_id
+        .as_deref()
+        .and_then(|id| id.parse::<isize>().ok())
+        .unwrap_or_default();
+    if hwnd_id == 0 {
+        return info;
+    }
+    let fallback = info.clone();
+    tokio::task::spawn_blocking(move || {
+        let hwnd = HWND(hwnd_id as *mut std::ffi::c_void);
+        collect_windows_document_sources(&mut info, hwnd);
+        info
+    })
+    .await
+    .unwrap_or(fallback)
+}
+
 fn query_active_window() -> anyhow::Result<WindowInfo> {
     let mut info = WindowInfo {
         platform: "win32".to_string(),
@@ -65,7 +84,6 @@ fn query_active_window() -> anyhow::Result<WindowInfo> {
         }
     }
 
-    collect_windows_document_sources(&mut info, hwnd);
     collect_title_and_cwd_documents(&mut info);
     Ok(info)
 }
@@ -74,8 +92,51 @@ fn collect_windows_document_sources(info: &mut WindowInfo, hwnd: HWND) {
     if is_office_like(info) {
         info.document_paths.extend(office_documents());
     }
-    info.document_paths.extend(uia_documents(hwnd));
+    if should_scan_uia(info) {
+        info.document_paths.extend(uia_documents(hwnd));
+    }
     info.document_paths = dedupe_documents(std::mem::take(&mut info.document_paths));
+}
+
+fn should_scan_uia(info: &WindowInfo) -> bool {
+    if is_office_like(info)
+        || crate::tools::likely_document_name_from_title(&info.window_title).is_some()
+    {
+        return true;
+    }
+    let app = info.app_name.to_lowercase();
+    let exe = info
+        .process
+        .as_ref()
+        .and_then(|p| p.executable.as_deref())
+        .unwrap_or_default()
+        .to_lowercase();
+    let name = info
+        .process
+        .as_ref()
+        .map(|p| p.name.to_lowercase())
+        .unwrap_or_default();
+    let haystack = format!("{app} {exe} {name}");
+    [
+        "typora",
+        "notepad",
+        "notepad++",
+        "wordpad",
+        "code.exe",
+        "visual studio code",
+        "sublime",
+        "obsidian",
+        "acrobat",
+        "acrord",
+        "foxit",
+        "sumatrapdf",
+        "wps",
+        "kwps",
+        "ket",
+        "wpp",
+    ]
+    .iter()
+    .any(|needle| haystack.contains(needle))
 }
 
 fn is_office_like(info: &WindowInfo) -> bool {

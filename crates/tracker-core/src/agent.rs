@@ -9,7 +9,8 @@ use crate::state::TrackerState;
 use crate::tools::{dedupe_documents, likely_document_name_from_title};
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone)]
@@ -32,7 +33,7 @@ impl Default for AgentConfig {
             no_activity: false,
             no_capture: false,
             no_browser_bridge: false,
-            poll_interval_ms: 500,
+            poll_interval_ms: 250,
         }
     }
 }
@@ -72,26 +73,34 @@ pub async fn start_agent(config: AgentConfig) -> anyhow::Result<AgentHandle> {
 fn spawn_window_monitor(state: TrackerState, poll_interval_ms: u64) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(poll_interval_ms.max(100)));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_identity = String::new();
-        let mut document_memory = DocumentMemory::default();
+        let mut last_enrich_key = String::new();
+        let mut last_enrich_at = Instant::now() - Duration::from_secs(10);
+        let document_memory = Arc::new(Mutex::new(DocumentMemory::default()));
+        let (enrich_tx, enrich_rx) = tokio::sync::watch::channel(None::<WindowInfo>);
+        spawn_window_enrichment_worker(state.clone(), document_memory.clone(), enrich_rx);
         loop {
             ticker.tick().await;
             if state.is_paused() {
                 continue;
             }
             match active_window().await {
-                Ok(info) => {
-                    let mut enriched = enrich_window(info).await;
-                    document_memory.apply(&mut enriched);
-                    let identity = format!(
-                        "{}|{:?}|{:?}",
-                        enriched.identity_key(),
-                        enriched.file_manager_state,
-                        enriched.terminal_context
-                    );
+                Ok(mut info) => {
+                    apply_document_memory(&document_memory, &mut info);
+                    let identity = fast_window_identity(&info);
                     if identity != last_identity {
                         last_identity = identity;
-                        state.update_window(enriched).await;
+                        state.update_window(info.clone()).await;
+                    }
+
+                    let enrich_key = foreground_match_key(&info);
+                    if enrich_key != last_enrich_key
+                        || last_enrich_at.elapsed() >= Duration::from_millis(900)
+                    {
+                        last_enrich_key = enrich_key;
+                        last_enrich_at = Instant::now();
+                        let _ = enrich_tx.send(Some(info));
                     }
                 }
                 Err(exc) => {
@@ -100,6 +109,65 @@ fn spawn_window_monitor(state: TrackerState, poll_interval_ms: u64) -> JoinHandl
             }
         }
     })
+}
+
+fn spawn_window_enrichment_worker(
+    state: TrackerState,
+    document_memory: Arc<Mutex<DocumentMemory>>,
+    mut rx: tokio::sync::watch::Receiver<Option<WindowInfo>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while rx.changed().await.is_ok() {
+            let Some(info) = rx.borrow_and_update().clone() else {
+                continue;
+            };
+            let expected_key = foreground_match_key(&info);
+            let mut enriched = enrich_window(info).await;
+            apply_document_memory(&document_memory, &mut enriched);
+            if should_publish_enriched(&state, &expected_key, &enriched).await {
+                state.update_window(enriched).await;
+            }
+        }
+    })
+}
+
+async fn should_publish_enriched(
+    state: &TrackerState,
+    expected_key: &str,
+    enriched: &WindowInfo,
+) -> bool {
+    let Some(current) = state.current_window().await else {
+        return true;
+    };
+    if foreground_match_key(&current) != expected_key {
+        return false;
+    }
+    fast_window_identity(&current) != fast_window_identity(enriched)
+}
+
+fn apply_document_memory(memory: &Arc<Mutex<DocumentMemory>>, info: &mut WindowInfo) {
+    if let Ok(mut memory) = memory.lock() {
+        memory.apply(info);
+    }
+}
+
+fn fast_window_identity(info: &WindowInfo) -> String {
+    format!(
+        "{}|{:?}|{:?}",
+        info.identity_key(),
+        info.file_manager_state,
+        info.terminal_context
+    )
+}
+
+fn foreground_match_key(info: &WindowInfo) -> String {
+    let pid = info.process.as_ref().map(|p| p.pid).unwrap_or_default();
+    format!(
+        "{}|{}|{}",
+        info.window_id.as_deref().unwrap_or_default(),
+        pid,
+        info.window_title
+    )
 }
 
 #[derive(Default)]

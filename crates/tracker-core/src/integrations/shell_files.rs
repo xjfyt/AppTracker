@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 pub fn shell_integration_dir_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -19,6 +20,12 @@ pub fn read_shell_cwds() -> HashMap<u32, String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return HashMap::new();
     };
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().without_tasks(),
+    );
     let mut out = HashMap::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -32,7 +39,7 @@ pub fn read_shell_cwds() -> HashMap<u32, String> {
         else {
             continue;
         };
-        if !pid_exists(pid) {
+        if system.process(Pid::from_u32(pid)).is_none() {
             let _ = std::fs::remove_file(&path);
             continue;
         }
@@ -44,10 +51,4 @@ pub fn read_shell_cwds() -> HashMap<u32, String> {
         }
     }
     out
-}
-
-fn pid_exists(pid: u32) -> bool {
-    sysinfo::System::new_all()
-        .process(sysinfo::Pid::from_u32(pid))
-        .is_some()
 }
