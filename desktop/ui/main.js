@@ -1,12 +1,21 @@
 let apiBase = document.querySelector("#apiBase").value.replace(/\/$/, "");
 let paused = false;
+let captureEnabled = false;
 let ws = null;
 let reconnectTimer = null;
 let lastScreenshotRefresh = 0;
 
 const statusEl = document.querySelector("#status");
 const pauseBtn = document.querySelector("#pauseBtn");
+const captureToggle = document.querySelector("#captureToggle");
+const captureBadge = document.querySelector("#captureBadge");
 const screenshotEl = document.querySelector("#screenshot");
+const screenshotHint = document.querySelector("#screenshotHint");
+const appBadge = document.querySelector("#appBadge");
+const lightbox = document.querySelector("#lightbox");
+const lightboxImg = document.querySelector("#lightboxImg");
+const lightboxClose = document.querySelector(".lightbox-close");
+
 const htmlCache = new Map();
 
 document.querySelector("#apiBase").addEventListener("change", (ev) => {
@@ -19,9 +28,39 @@ pauseBtn.addEventListener("click", async () => {
   await fetch(`${apiBase}/api/v1/pause`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ paused })
+    body: JSON.stringify({ paused }),
   }).catch(() => {});
   renderPaused();
+});
+
+captureToggle.addEventListener("change", async (ev) => {
+  const enabled = ev.target.checked;
+  await fetch(`${apiBase}/api/v1/capture`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  }).catch(() => {});
+  applyCaptureState(enabled);
+});
+
+screenshotEl.addEventListener("dblclick", () => {
+  if (!screenshotEl.src || screenshotEl.classList.contains("hidden")) return;
+  lightboxImg.src = screenshotEl.src;
+  lightbox.hidden = false;
+});
+
+lightbox.addEventListener("click", (ev) => {
+  if (ev.target === lightbox || ev.target === lightboxClose) {
+    lightbox.hidden = true;
+    lightboxImg.removeAttribute("src");
+  }
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && !lightbox.hidden) {
+    lightbox.hidden = true;
+    lightboxImg.removeAttribute("src");
+  }
 });
 
 function renderPaused() {
@@ -29,11 +68,28 @@ function renderPaused() {
   pauseBtn.classList.toggle("paused", paused);
 }
 
+function applyCaptureState(enabled) {
+  captureEnabled = !!enabled;
+  captureToggle.checked = captureEnabled;
+  if (captureEnabled) {
+    captureBadge.textContent = "已开启";
+    captureBadge.className = "chip chip-success";
+    screenshotHint.textContent = "等待第一帧截图…双击图像可放大查看";
+  } else {
+    captureBadge.textContent = "未启用";
+    captureBadge.className = "chip chip-muted";
+    screenshotHint.textContent = "开启截图后此处会显示最新窗口截图，双击可放大";
+    screenshotEl.removeAttribute("src");
+    screenshotEl.classList.add("hidden");
+  }
+}
+
 async function loadSnapshot() {
   const res = await fetch(`${apiBase}/api/v1/snapshot`);
   const snap = await res.json();
   paused = !!snap.paused;
   renderPaused();
+  applyCaptureState(!!snap.capture_enabled);
   renderSnapshot(snap);
 }
 
@@ -44,9 +100,7 @@ function connect() {
   }
   if (ws) {
     ws.onclose = null;
-    try {
-      ws.close();
-    } catch {}
+    try { ws.close(); } catch {}
     ws = null;
   }
   statusEl.textContent = "connecting";
@@ -77,10 +131,14 @@ function connect() {
       paused = !!msg.data;
       renderPaused();
     }
+    if (msg.type === "capture_changed") {
+      applyCaptureState(!!msg.data);
+    }
   };
 }
 
 function renderSnapshot(snap) {
+  if (typeof snap.capture_enabled === "boolean") applyCaptureState(snap.capture_enabled);
   if (snap.window) renderWindow(snap.window);
   if (snap.activity) renderActivity(snap.activity);
   if (snap.browser_tab) renderBrowser(snap.browser_tab);
@@ -89,73 +147,96 @@ function renderSnapshot(snap) {
 
 function renderWindow(win) {
   const process = win.process || {};
+  appBadge.textContent = win.app_name || "无";
+  appBadge.className = win.app_name ? "chip chip-primary" : "chip chip-muted";
+
   const geometry = win.geometry
-    ? `${win.geometry.x}, ${win.geometry.y}, ${win.geometry.width}x${win.geometry.height}`
+    ? `${win.geometry.x}, ${win.geometry.y} · ${win.geometry.width}×${win.geometry.height}`
     : "未知";
-  renderGrid("#windowGrid", [
-    ["应用", win.app_name || "未知"],
+
+  const rows = [
+    ["应用", win.app_name],
     ["标题", win.window_title || "无标题"],
-    ["平台", win.platform || ""],
-    ["窗口 ID", win.window_id || ""],
-    ["类 / Bundle", win.window_class || win.app_bundle_id || ""],
+    ["平台", win.platform],
+    ["窗口 ID", win.window_id],
+    ["类 / Bundle", win.window_class || win.app_bundle_id],
     ["几何", geometry],
-    ["PID", process.pid || ""],
-    ["进程", process.name || ""],
-    ["可执行文件", process.executable || ""],
-    ["cwd", process.cwd || ""],
-    ["错误", (win.errors || []).join("; ")]
-  ]);
+    ["PID", process.pid],
+    ["进程", process.name],
+    ["可执行文件", process.executable],
+    ["cwd", process.cwd],
+    ["错误", (win.errors || []).join("; ")],
+  ];
+
+  renderGrid("#windowGrid", rows);
   renderDocuments(win.document_paths || []);
   renderTerminal(win.terminal_context);
   renderFiles(win.file_manager_state);
 }
 
 function renderGrid(selector, rows) {
-  setHtml(selector, rows.map(([k, v]) => `
-    <div class="key">${escapeHtml(k)}</div>
-    <div class="value">${escapeHtml(String(v || ""))}</div>
-  `).join(""));
+  const html = rows
+    .filter(([_, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `
+      <div class="key">${escapeHtml(k)}</div>
+      <div class="value-text">${escapeHtml(String(v))}</div>
+    `)
+    .join("");
+  setHtml(selector, html);
 }
 
 function renderDocuments(docs) {
   const el = document.querySelector("#documents");
   if (!docs.length) {
-    el.className = "list empty";
+    el.className = "card-list empty";
     htmlCache.delete(el);
     el.textContent = "暂无路径";
     return;
   }
-  el.className = "list";
+  el.className = "card-list";
   setHtml(el, docs.map((d) => `
-    <div class="item">
+    <div class="card">
       <div class="mono">${escapeHtml(d.path)}</div>
-      <div>${escapeHtml(d.kind)} · ${escapeHtml(d.source)} · ${Number(d.confidence).toFixed(2)}</div>
+      <div class="card-row">
+        <span class="chip chip-kind">${escapeHtml(d.kind)}</span>
+        <span class="chip chip-source">${escapeHtml(d.source)}</span>
+        <span class="chip ${confidenceChipClass(d.confidence)}">置信度 ${formatPercent(d.confidence)}</span>
+      </div>
     </div>
   `).join(""));
 }
 
 function renderActivity(stats) {
-  setHtml("#activity", [
-    ["keys", stats.keys_count],
-    ["clicks", stats.clicks_count],
-    ["scrolls", stats.scrolls_count],
-    ["idle", `${Number(stats.idle_seconds).toFixed(1)}s`]
-  ].map(([k, v]) => `<div class="metric"><strong>${escapeHtml(String(v))}</strong>${escapeHtml(k)}</div>`).join(""));
+  const items = [
+    ["按键", stats.keys_count],
+    ["点击", stats.clicks_count],
+    ["滚动", stats.scrolls_count],
+    ["空闲", `${Number(stats.idle_seconds || 0).toFixed(1)}s`],
+  ];
+  setHtml("#activity", items.map(([label, v]) => `
+    <div class="metric">
+      <strong>${escapeHtml(String(v))}</strong>
+      <div class="metric-label">${escapeHtml(label)}</div>
+    </div>
+  `).join(""));
 }
 
 function renderBrowser(tab) {
   const el = document.querySelector("#browser");
   if (!tab) {
-    el.className = "list empty";
+    el.className = "card-list empty";
     htmlCache.delete(el);
     el.textContent = "等待浏览器扩展连接";
     return;
   }
-  el.className = "list";
+  el.className = "card-list";
   setHtml(el, `
-    <div class="item">
-      <strong>${escapeHtml(tab.browser)}</strong>
-      <div>${escapeHtml(tab.title || "")}</div>
+    <div class="card">
+      <div class="card-row">
+        <span class="chip chip-primary">${escapeHtml(tab.browser)}</span>
+        ${tab.is_active ? `<span class="chip chip-success">当前</span>` : ""}
+      </div>
+      <div class="strong">${escapeHtml(tab.title || "")}</div>
       <div class="mono">${escapeHtml(tab.url || "")}</div>
     </div>
   `);
@@ -164,18 +245,25 @@ function renderBrowser(tab) {
 function renderTerminal(ctx) {
   const el = document.querySelector("#terminal");
   if (!ctx || (!ctx.shells?.length && !ctx.running?.length)) {
-    el.className = "list empty";
+    el.className = "card-list empty";
     htmlCache.delete(el);
     el.textContent = "未识别到终端上下文";
     return;
   }
-  el.className = "list";
-  const rows = [...(ctx.shells || []), ...(ctx.running || [])];
-  setHtml(el, rows.map((p) => `
-    <div class="item">
-      <strong>${escapeHtml(p.name)} (${p.pid})</strong>
-      <div class="mono">${escapeHtml(p.cwd || "")}</div>
-      <div class="mono">${escapeHtml((p.cmdline || []).join(" "))}</div>
+  el.className = "card-list";
+  const items = [
+    ...(ctx.shells || []).map((p) => ({ proc: p, kind: "shell" })),
+    ...(ctx.running || []).map((p) => ({ proc: p, kind: "running" })),
+  ];
+  setHtml(el, items.map(({ proc, kind }) => `
+    <div class="card">
+      <div class="card-row">
+        <span class="chip ${kind === "shell" ? "chip-primary" : "chip-kind"}">${kind}</span>
+        <span class="strong">${escapeHtml(proc.name)}</span>
+        <span class="meta">PID ${proc.pid}</span>
+      </div>
+      ${proc.cwd ? `<div class="mono">${escapeHtml(proc.cwd)}</div>` : ""}
+      ${proc.cmdline?.length ? `<div class="mono meta">${escapeHtml(proc.cmdline.join(" "))}</div>` : ""}
     </div>
   `).join(""));
 }
@@ -183,26 +271,31 @@ function renderTerminal(ctx) {
 function renderFiles(state) {
   const el = document.querySelector("#files");
   if (!state || !state.windows?.length) {
-    el.className = "list empty";
+    el.className = "card-list empty";
     htmlCache.delete(el);
     el.textContent = "未识别到文件管理器状态";
     return;
   }
-  el.className = "list";
+  el.className = "card-list";
   setHtml(el, state.windows.map((w) => `
-    <div class="item">
-      <strong>${w.is_active ? "当前" : "窗口"}</strong>
+    <div class="card">
+      <div class="card-row">
+        <span class="chip ${w.is_active ? "chip-success" : "chip-muted"}">${w.is_active ? "当前窗口" : "后台窗口"}</span>
+      </div>
       <div class="mono">${escapeHtml(w.folder)}</div>
-      ${(w.selected_items || []).map((s) => `<div class="mono">selected: ${escapeHtml(s)}</div>`).join("")}
+      ${(w.selected_items || []).map((s) => `<div class="card-row"><span class="chip chip-source">选中</span><span class="mono">${escapeHtml(s)}</span></div>`).join("")}
     </div>
   `).join(""));
 }
 
 function refreshScreenshot() {
+  if (!captureEnabled) return;
   const now = Date.now();
   if (now - lastScreenshotRefresh < 500) return;
   lastScreenshotRefresh = now;
   screenshotEl.src = `${apiBase}/api/v1/screenshot?t=${Date.now()}`;
+  screenshotEl.classList.remove("hidden");
+  screenshotHint.textContent = "双击图像可放大查看";
 }
 
 function setHtml(target, html) {
@@ -213,13 +306,27 @@ function setHtml(target, html) {
   el.innerHTML = html;
 }
 
+function formatPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${Math.round(n * 100)}%`;
+}
+
+function confidenceChipClass(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "chip-muted";
+  if (n >= 0.8) return "chip-success";
+  if (n >= 0.5) return "chip-warn";
+  return "chip-muted";
+}
+
 function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, (ch) => ({
+  return String(value).replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
     "\"": "&quot;",
-    "'": "&#39;"
+    "'": "&#39;",
   })[ch]);
 }
 

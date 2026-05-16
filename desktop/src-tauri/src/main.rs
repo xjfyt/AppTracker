@@ -4,7 +4,7 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "tracker_core=info,active_tracker_tauri=info".to_string()),
+                .unwrap_or_else(|_| "tracker_core=info,apptracker_tauri=info".to_string()),
         )
         .try_init()
         .ok();

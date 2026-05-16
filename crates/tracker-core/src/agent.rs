@@ -20,6 +20,7 @@ pub struct AgentConfig {
     pub browser_port: u16,
     pub no_activity: bool,
     pub no_capture: bool,
+    pub capture_default_on: bool,
     pub no_browser_bridge: bool,
     pub poll_interval_ms: u64,
 }
@@ -32,6 +33,7 @@ impl Default for AgentConfig {
             browser_port: 5006,
             no_activity: false,
             no_capture: false,
+            capture_default_on: false,
             no_browser_bridge: false,
             poll_interval_ms: 250,
         }
@@ -58,6 +60,7 @@ pub async fn start_agent(config: AgentConfig) -> anyhow::Result<AgentHandle> {
         spawn_activity_monitor(state.clone(), 60);
     }
     if !config.no_capture {
+        state.set_capture_enabled(config.capture_default_on);
         spawn_screen_capture(state.clone());
     }
     let window_task = spawn_window_monitor(state.clone(), config.poll_interval_ms);

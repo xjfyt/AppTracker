@@ -2,8 +2,8 @@ use clap::Parser;
 use tracker_core::{start_agent, AgentConfig};
 
 #[derive(Debug, Parser)]
-#[command(name = "active-tracker-agent")]
-#[command(about = "Headless Rust Active Tracker agent exposing REST/SSE/WebSocket APIs")]
+#[command(name = "apptracker-agent")]
+#[command(about = "Headless AppTracker agent exposing REST/SSE/WebSocket APIs")]
 struct Args {
     #[arg(long, default_value = "127.0.0.1")]
     api_host: String,
@@ -15,6 +15,8 @@ struct Args {
     no_activity: bool,
     #[arg(long)]
     no_capture: bool,
+    #[arg(long)]
+    capture_default_on: bool,
     #[arg(long)]
     no_browser_bridge: bool,
     #[arg(long, default_value_t = 250)]
@@ -37,12 +39,13 @@ async fn main() -> anyhow::Result<()> {
         browser_port: args.browser_port,
         no_activity: args.no_activity,
         no_capture: args.no_capture,
+        capture_default_on: args.capture_default_on,
         no_browser_bridge: args.no_browser_bridge,
         poll_interval_ms: args.poll_interval_ms,
     })
     .await?;
 
-    println!("Active Tracker Rust API: http://{}", handle.api.addr);
+    println!("AppTracker API: http://{}", handle.api.addr);
     if let Some(bridge) = &handle.browser_bridge {
         println!(
             "Browser bridge: ws://{} (token: {})",

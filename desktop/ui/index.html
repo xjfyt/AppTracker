@@ -3,52 +3,81 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Active Tracker Rust</title>
+    <title>AppTracker</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="topbar">
-      <button id="pauseBtn" class="primary">暂停</button>
-      <div>
-        <h1>Active Tracker Rust</h1>
-        <p>UI 只消费本机 API，采集核心运行在 Rust agent 中。</p>
+      <div class="brand">
+        <div class="logo">A</div>
+        <div class="brand-text">
+          <h1>AppTracker</h1>
+          <p class="muted">实时记录前台窗口、文档、终端与浏览器上下文</p>
+        </div>
       </div>
       <div class="spacer"></div>
-      <label class="api">
-        API
-        <input id="apiBase" value="http://127.0.0.1:5007" />
-      </label>
-      <span id="status" class="badge">connecting</span>
+
+      <div class="toolbar">
+        <label class="switch" title="截图采集开关（默认关闭）">
+          <input id="captureToggle" type="checkbox" />
+          <span class="track"><span class="thumb"></span></span>
+          <span class="switch-label">截图</span>
+        </label>
+
+        <button id="pauseBtn" class="btn btn-primary">暂停</button>
+
+        <label class="api">
+          <span class="api-label">API</span>
+          <input id="apiBase" value="http://127.0.0.1:5007" />
+        </label>
+
+        <span id="status" class="badge">connecting</span>
+      </div>
     </header>
 
     <main class="layout">
-      <section class="panel large">
-        <h2>当前窗口</h2>
+      <section class="panel panel-window">
+        <header class="panel-head">
+          <h2>当前窗口</h2>
+          <span id="appBadge" class="chip chip-primary">无</span>
+        </header>
         <div id="windowGrid" class="grid"></div>
-        <h3>文档 / 路径</h3>
-        <div id="documents" class="list empty">暂无路径</div>
+
+        <h3 class="section-title">文档 / 路径</h3>
+        <div id="documents" class="card-list empty">暂无路径</div>
       </section>
 
       <section class="panel">
-        <h2>浏览器 Tab</h2>
-        <div id="browser" class="list empty">等待浏览器扩展连接</div>
+        <header class="panel-head"><h2>浏览器 Tab</h2></header>
+        <div id="browser" class="card-list empty">等待浏览器扩展连接</div>
 
-        <h2>终端</h2>
-        <div id="terminal" class="list empty">未识别到终端上下文</div>
+        <header class="panel-head panel-head-spaced"><h2>终端</h2></header>
+        <div id="terminal" class="card-list empty">未识别到终端上下文</div>
 
-        <h2>文件管理器</h2>
-        <div id="files" class="list empty">未识别到文件管理器状态</div>
+        <header class="panel-head panel-head-spaced"><h2>文件管理器</h2></header>
+        <div id="files" class="card-list empty">未识别到文件管理器状态</div>
       </section>
 
       <section class="panel">
-        <h2>活动</h2>
+        <header class="panel-head"><h2>活动</h2></header>
         <div id="activity" class="metric-row"></div>
-        <h2>截图</h2>
-        <img id="screenshot" alt="latest focused window screenshot" />
+
+        <header class="panel-head panel-head-spaced">
+          <h2>截图</h2>
+          <span id="captureBadge" class="chip chip-muted">未启用</span>
+        </header>
+        <figure class="screenshot-frame" id="screenshotFrame">
+          <img id="screenshot" alt="latest focused window screenshot" />
+          <figcaption id="screenshotHint" class="muted">开启截图后此处会显示最新窗口截图，双击可放大</figcaption>
+        </figure>
       </section>
     </main>
+
+    <div id="lightbox" class="lightbox" hidden>
+      <button class="lightbox-close" aria-label="关闭">×</button>
+      <img id="lightboxImg" alt="screenshot enlarged" />
+    </div>
 
     <script type="module" src="./main.js"></script>
   </body>
 </html>
-

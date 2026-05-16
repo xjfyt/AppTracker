@@ -180,6 +180,7 @@ pub struct Snapshot {
     pub browser_tab: Option<BrowserTab>,
     pub has_screenshot: bool,
     pub paused: bool,
+    pub capture_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

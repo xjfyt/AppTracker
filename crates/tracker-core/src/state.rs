@@ -18,6 +18,7 @@ pub struct TrackerState {
     inner: Arc<RwLock<InnerState>>,
     tx: broadcast::Sender<TrackerEvent>,
     paused: Arc<AtomicBool>,
+    capture_enabled: Arc<AtomicBool>,
 }
 
 impl TrackerState {
@@ -27,6 +28,7 @@ impl TrackerState {
             inner: Arc::new(RwLock::new(InnerState::default())),
             tx,
             paused: Arc::new(AtomicBool::new(false)),
+            capture_enabled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -43,6 +45,23 @@ impl TrackerState {
         let _ = self.tx.send(TrackerEvent::new("paused_changed", &paused));
     }
 
+    pub fn is_capture_enabled(&self) -> bool {
+        self.capture_enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn set_capture_enabled(&self, enabled: bool) {
+        let prev = self.capture_enabled.swap(enabled, Ordering::Relaxed);
+        if prev != enabled {
+            let _ = self
+                .tx
+                .send(TrackerEvent::new("capture_changed", &enabled));
+        }
+    }
+
+    pub async fn clear_screenshot(&self) {
+        self.inner.write().await.latest_screenshot_png = None;
+    }
+
     pub async fn snapshot(&self) -> Snapshot {
         let inner = self.inner.read().await;
         Snapshot {
@@ -51,6 +70,7 @@ impl TrackerState {
             browser_tab: inner.browser_tab.clone(),
             has_screenshot: inner.latest_screenshot_png.is_some(),
             paused: self.is_paused(),
+            capture_enabled: self.is_capture_enabled(),
         }
     }
 

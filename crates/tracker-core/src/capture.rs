@@ -13,7 +13,7 @@ pub fn spawn_screen_capture(state: TrackerState) {
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         loop {
             ticker.tick().await;
-            if state.is_paused() {
+            if state.is_paused() || !state.is_capture_enabled() {
                 continue;
             }
             let Some(window) = state.current_window().await else {

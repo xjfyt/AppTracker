@@ -54,12 +54,13 @@ fn router(state: TrackerState) -> Router {
         .route("/api/v1/events", get(events_sse))
         .route("/api/v1/ws", get(events_ws))
         .route("/api/v1/pause", get(pause_status).post(set_pause))
+        .route("/api/v1/capture", get(capture_status).post(set_capture))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"ok": true, "service": "active-tracker-rs"}))
+    Json(serde_json::json!({"ok": true, "service": "apptracker"}))
 }
 
 async fn snapshot(State(state): State<TrackerState>) -> Json<crate::models::Snapshot> {
@@ -184,6 +185,26 @@ async fn set_pause(
 ) -> Json<serde_json::Value> {
     state.set_paused(body.paused);
     Json(serde_json::json!({"paused": body.paused}))
+}
+
+async fn capture_status(State(state): State<TrackerState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"enabled": state.is_capture_enabled()}))
+}
+
+#[derive(Debug, Deserialize)]
+struct CaptureBody {
+    enabled: bool,
+}
+
+async fn set_capture(
+    State(state): State<TrackerState>,
+    Json(body): Json<CaptureBody>,
+) -> Json<serde_json::Value> {
+    state.set_capture_enabled(body.enabled);
+    if !body.enabled {
+        state.clear_screenshot().await;
+    }
+    Json(serde_json::json!({"enabled": body.enabled}))
 }
 
 async fn bind_with_fallback(host: &str, port: u16) -> anyhow::Result<SocketAddr> {
