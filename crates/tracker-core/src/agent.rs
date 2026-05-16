@@ -3,8 +3,12 @@ use crate::api::{spawn_api, ServerHandle};
 use crate::bridge::{spawn_browser_bridge, BrowserBridgeHandle};
 use crate::capture::spawn_screen_capture;
 use crate::integrations::enrich_window;
+use crate::models::{DocumentSource, WindowInfo};
 use crate::platform::active_window;
 use crate::state::TrackerState;
+use crate::tools::{dedupe_documents, likely_document_name_from_title};
+use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 
@@ -69,6 +73,7 @@ fn spawn_window_monitor(state: TrackerState, poll_interval_ms: u64) -> JoinHandl
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(poll_interval_ms.max(100)));
         let mut last_identity = String::new();
+        let mut document_memory = DocumentMemory::default();
         loop {
             ticker.tick().await;
             if state.is_paused() {
@@ -76,7 +81,8 @@ fn spawn_window_monitor(state: TrackerState, poll_interval_ms: u64) -> JoinHandl
             }
             match active_window().await {
                 Ok(info) => {
-                    let enriched = enrich_window(info).await;
+                    let mut enriched = enrich_window(info).await;
+                    document_memory.apply(&mut enriched);
                     let identity = format!(
                         "{}|{:?}|{:?}",
                         enriched.identity_key(),
@@ -94,4 +100,73 @@ fn spawn_window_monitor(state: TrackerState, poll_interval_ms: u64) -> JoinHandl
             }
         }
     })
+}
+
+#[derive(Default)]
+struct DocumentMemory {
+    by_process: HashMap<String, HashMap<String, String>>,
+    global: HashMap<String, String>,
+}
+
+impl DocumentMemory {
+    fn apply(&mut self, info: &mut WindowInfo) {
+        self.remember(info);
+        self.resolve_title_filename(info);
+        info.document_paths = dedupe_documents(std::mem::take(&mut info.document_paths));
+    }
+
+    fn remember(&mut self, info: &WindowInfo) {
+        let Some(process_key) = process_memory_key(info) else {
+            return;
+        };
+        let process_docs = self.by_process.entry(process_key).or_default();
+        for doc in &info.document_paths {
+            if doc.kind != "file" {
+                continue;
+            }
+            let path = Path::new(&doc.path);
+            if !path.is_absolute() || !path.exists() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let key = normalize_name(name);
+            process_docs.insert(key.clone(), doc.path.clone());
+            self.global.insert(key, doc.path.clone());
+        }
+    }
+
+    fn resolve_title_filename(&self, info: &mut WindowInfo) {
+        let Some(name) = likely_document_name_from_title(&info.window_title) else {
+            return;
+        };
+        let key = normalize_name(&name);
+        let process_hit = process_memory_key(info)
+            .and_then(|process_key| self.by_process.get(&process_key))
+            .and_then(|docs| docs.get(&key));
+        let path = process_hit.or_else(|| self.global.get(&key));
+        let Some(path) = path else {
+            return;
+        };
+        info.document_paths.push(DocumentSource {
+            path: path.clone(),
+            kind: "file".to_string(),
+            source: "title_memory".to_string(),
+            confidence: 0.88,
+        });
+    }
+}
+
+fn process_memory_key(info: &WindowInfo) -> Option<String> {
+    let proc_ = info.process.as_ref()?;
+    Some(format!(
+        "{}:{}",
+        proc_.pid,
+        proc_.executable.as_deref().unwrap_or(&proc_.name)
+    ))
+}
+
+fn normalize_name(name: &str) -> String {
+    name.trim().to_lowercase()
 }

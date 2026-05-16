@@ -122,18 +122,27 @@ function Emit-Path($source, $path) {
 }
 
 $groups = @(
-  @{ Source = 'office:word'; ProgIds = @('Word.Application', 'KWPS.Application', 'Kwps.Application', 'WPS.Application'); Collection = 'Documents' },
-  @{ Source = 'office:excel'; ProgIds = @('Excel.Application', 'KET.Application', 'Ket.Application', 'ET.Application'); Collection = 'Workbooks' },
-  @{ Source = 'office:powerpoint'; ProgIds = @('PowerPoint.Application', 'KWPP.Application', 'Kwpp.Application', 'WPP.Application'); Collection = 'Presentations' }
+  @{ Source = 'office:word'; ProgIds = @('Word.Application', 'KWPS.Application', 'Kwps.Application', 'WPS.Application'); Active = 'ActiveDocument'; Collection = 'Documents' },
+  @{ Source = 'office:excel'; ProgIds = @('Excel.Application', 'KET.Application', 'Ket.Application', 'ET.Application'); Active = 'ActiveWorkbook'; Collection = 'Workbooks' },
+  @{ Source = 'office:powerpoint'; ProgIds = @('PowerPoint.Application', 'KWPP.Application', 'Kwpp.Application', 'WPP.Application'); Active = 'ActivePresentation'; Collection = 'Presentations' }
 )
 
 foreach ($group in $groups) {
   $source = [string]$group['Source']
+  $activeName = [string]$group['Active']
   $collectionName = [string]$group['Collection']
   foreach ($progId in $group['ProgIds']) {
     try {
       $app = [Runtime.InteropServices.Marshal]::GetActiveObject($progId)
       if (-not $app) { continue }
+      try {
+        $active = $app.$activeName
+        if ($active) {
+          $activePath = $active.FullName
+          if (-not $activePath) { $activePath = $active.Path }
+          Emit-Path "$($source):active" $activePath
+        }
+      } catch {}
       $items = $app.$collectionName
       foreach ($item in $items) {
         try {
@@ -197,6 +206,11 @@ fn parse_document_lines(text: &str, confidence: f32) -> Vec<DocumentSource> {
     for raw in text.lines() {
         let Some((source, value)) = raw.split_once('|') else {
             continue;
+        };
+        let confidence = if source.ends_with(":active") {
+            0.99
+        } else {
+            confidence
         };
         if let Some(doc) = document_from_existing_path(value, source, confidence) {
             out.push(doc);

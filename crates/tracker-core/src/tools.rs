@@ -152,6 +152,12 @@ pub fn likely_document_name_from_title(title: &str) -> Option<String> {
     if candidate.is_empty() {
         return None;
     }
+    for sep in ['\u{2014}', '\u{2013}'] {
+        if let Some((left, _)) = candidate.split_once(sep) {
+            candidate = left.trim();
+            break;
+        }
+    }
     const SEPARATORS: &[&str] = &[" - ", " — ", " – "];
     for sep in SEPARATORS {
         if let Some((left, _)) = candidate.split_once(sep) {
