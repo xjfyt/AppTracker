@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from common.models import ActivityStats, BrowserTab, WindowInfo
 from common.signals import bus
+from tools.shell_installer import install_powershell_integration
 from ui.widgets.activity_card import ActivityCard
 from ui.widgets.app_card import AppCard
 from ui.widgets.browser_card import BrowserCard
@@ -57,6 +58,17 @@ class TopBar(QFrame):
         self.time_lbl.setObjectName("Mono")
         layout.addWidget(self.time_lbl)
 
+        # 仅 Windows：PowerShell 的 cd 不更新 PEB，需要装 shell 集成才能追到
+        if sys.platform == "win32":
+            self.install_shell_btn = QPushButton("🛠 装 cd 追踪")
+            self.install_shell_btn.setObjectName("MiniButton")
+            self.install_shell_btn.setToolTip(
+                "PowerShell 的 cd 只更新 $PWD，不更新进程 PEB，psutil 拿不到。\n"
+                "点击会向你的 $PROFILE 追加一行 source；幂等，重复点不会重复写。"
+            )
+            self.install_shell_btn.clicked.connect(self._install_shell_integration)
+            layout.addWidget(self.install_shell_btn)
+
         self.copy_token_btn = QPushButton("复制 Token")
         self.copy_token_btn.setObjectName("MiniButton")
         self.copy_token_btn.clicked.connect(self._copy_token)
@@ -77,6 +89,15 @@ class TopBar(QFrame):
         QGuiApplication.clipboard().setText(path.read_text().strip())
         self.copy_token_btn.setText("✓ 已复制")
         QTimer.singleShot(1500, lambda: self.copy_token_btn.setText("复制 Token"))
+
+    def _install_shell_integration(self) -> None:
+        result = install_powershell_integration()
+        if result.ok:
+            QMessageBox.information(self, "shell 集成", result.message)
+            self.install_shell_btn.setText("✓ 已装 cd 追踪")
+            QTimer.singleShot(3000, lambda: self.install_shell_btn.setText("🛠 装 cd 追踪"))
+        else:
+            QMessageBox.warning(self, "安装失败", result.message)
 
 
 class PermissionBanner(QFrame):
