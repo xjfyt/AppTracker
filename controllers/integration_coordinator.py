@@ -41,7 +41,7 @@ from tools.path_filter import classify_path, dedupe_documents
 
 log = logging.getLogger(__name__)
 
-REFRESH_INTERVAL_MS = 1500
+REFRESH_INTERVAL_MS = 700
 
 
 class IntegrationCoordinator(QObject):

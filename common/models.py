@@ -73,6 +73,8 @@ class TerminalProcess:
     create_time: Optional[float] = None
     is_shell: bool = False
     cwd_source: str = "psutil"   # psutil | shell_file
+    last_command: Optional[str] = None        # 由 shell 集成脚本写入，已脱敏
+    last_command_redacted: bool = False
 
 
 @dataclass

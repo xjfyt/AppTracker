@@ -12,7 +12,7 @@ import psutil
 from common.models import TerminalContext, TerminalProcess, WindowInfo
 from tools.redaction import redact_cmdline
 from plugins.terminals.base import TerminalIntegration, detect_terminal
-from plugins.terminals.shell_files import read_shell_cwds
+from plugins.terminals.shell_files import ShellInfo, read_shell_infos
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ RUNNING_BLACKLIST_NAMES = {
 
 def _proc_to_terminal_process(
     child: psutil.Process,
-    shell_files: dict[int, str],
+    shell_infos: dict[int, ShellInfo],
 ) -> Optional[TerminalProcess]:
     try:
         name = child.name() or ""
@@ -39,10 +39,12 @@ def _proc_to_terminal_process(
     name_lc = name.lower()
     is_shell = name_lc in SHELL_NAMES
 
+    info = shell_infos.get(child.pid)
+
     cwd: Optional[str] = None
     cwd_source = "psutil"
-    if child.pid in shell_files:
-        cwd = shell_files[child.pid]
+    if info is not None and info.cwd:
+        cwd = info.cwd
         cwd_source = "shell_file"
     else:
         try:
@@ -56,6 +58,15 @@ def _proc_to_terminal_process(
         raw_cmdline = []
     redacted, was = redact_cmdline(raw_cmdline)
 
+    # 最近一次命令（来自 shell 集成脚本）；按空白切再走 redact_cmdline，
+    # 命中 token / --password 等同样脱敏。tokenize 不严格但够用于打码。
+    last_cmd: Optional[str] = None
+    last_cmd_redacted = False
+    if info is not None and info.last_command:
+        tokens = info.last_command.split()
+        red_tokens, last_cmd_redacted = redact_cmdline(tokens)
+        last_cmd = " ".join(red_tokens) if red_tokens else info.last_command
+
     try:
         ctime = child.create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -65,10 +76,11 @@ def _proc_to_terminal_process(
         pid=child.pid, name=name, cwd=cwd,
         cmdline=redacted, cmdline_redacted=was,
         create_time=ctime, is_shell=is_shell, cwd_source=cwd_source,
+        last_command=last_cmd, last_command_redacted=last_cmd_redacted,
     )
 
 
-def _walk(term_pid: int, shell_files: dict[int, str]) -> Optional[TerminalContext]:
+def _walk(term_pid: int, shell_infos: dict[int, ShellInfo]) -> Optional[TerminalContext]:
     try:
         term = psutil.Process(term_pid)
         children = term.children(recursive=True)
@@ -78,7 +90,7 @@ def _walk(term_pid: int, shell_files: dict[int, str]) -> Optional[TerminalContex
     shells: list[TerminalProcess] = []
     running: list[TerminalProcess] = []
     for c in children:
-        tp = _proc_to_terminal_process(c, shell_files)
+        tp = _proc_to_terminal_process(c, shell_infos)
         if tp is None:
             continue
         if tp.is_shell:
@@ -104,12 +116,12 @@ class ProcessTreeTerminal(TerminalIntegration):
     async def query(self, info: WindowInfo) -> Optional[TerminalContext]:
         if not info.process:
             return None
-        # shell 集成脚本写的 PID→cwd 映射，先读一次
-        shell_files = read_shell_cwds()
+        # shell 集成脚本写的 PID→(cwd, last_cmd) 映射，先读一次
+        shell_infos = read_shell_infos()
         loop = asyncio.get_running_loop()
         try:
             return await asyncio.wait_for(
-                loop.run_in_executor(None, _walk, info.process.pid, shell_files),
+                loop.run_in_executor(None, _walk, info.process.pid, shell_infos),
                 timeout=1.5,
             )
         except asyncio.TimeoutError:
