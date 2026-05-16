@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import psutil
@@ -15,7 +15,7 @@ import win32api
 import win32con
 import win32gui
 import win32process
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 
 from controllers.window_monitor.base import WindowMonitor
 from common.models import (
@@ -41,7 +41,9 @@ TITLE_SUFFIXES = [
     " - Google Chrome", " - Microsoft Edge", " — Mozilla Firefox",
 ]
 
-UIA_TIMEOUT_SEC = 2.0
+# Hook 触发后等多久才查询：把瞬时的事件流合成一次 query_now。
+# 浏览器切 tab / 缩放窗口会瞬时发几十个 NAMECHANGE，必须合并，否则主线程被打爆。
+HOOK_DEBOUNCE_MS = 80
 
 
 def _file_description(exe: str) -> Optional[str]:
@@ -76,8 +78,11 @@ class _HookThread(QThread):
 
         EVENT_SYSTEM_FOREGROUND = 0x0003
         EVENT_OBJECT_NAMECHANGE = 0x800C
-        EVENT_OBJECT_LOCATIONCHANGE = 0x800B
+        # 不订阅 EVENT_OBJECT_LOCATIONCHANGE：它对每个 accessible 对象的位置变化都触发
+        # （包括鼠标光标、菜单、状态栏、滚动条……），全局打开会洪泛主线程；
+        # 焦点窗口的位置变化由 base.py 里 2s 的 fallback_timer 兜底足够了。
         WINEVENT_OUTOFCONTEXT = 0x0000
+        OBJID_WINDOW = 0   # 仅过滤"窗口本身"，丢弃所有子控件/菜单/光标等噪声
 
         WinEventProcType = ctypes.WINFUNCTYPE(
             None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
@@ -85,13 +90,17 @@ class _HookThread(QThread):
         )
 
         def _callback(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime):
+            # 仅关心 top-level 窗口本身的事件；子元素 (status bar、time、tooltip、
+            # 浏览器内的 a11y tree 节点) 的 NAMECHANGE 直接丢弃
+            if idObject != OBJID_WINDOW or idChild != 0 or not hwnd:
+                return
             self.fired.emit()
 
         self._proc = WinEventProcType(_callback)  # keep ref alive
         user32 = ctypes.windll.user32
 
         hooks = []
-        for ev in (EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_LOCATIONCHANGE):
+        for ev in (EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_NAMECHANGE):
             h = user32.SetWinEventHook(ev, ev, 0, self._proc, 0, 0, WINEVENT_OUTOFCONTEXT)
             if h:
                 hooks.append(h)
@@ -115,7 +124,14 @@ class WindowsMonitor(WindowMonitor):
     def __init__(self, bus):
         super().__init__(bus)
         self._hook = _HookThread()
-        self._hook.fired.connect(lambda: self.emit_current("winevent"))
+        # 用单触发 QTimer 把瞬时事件流合并：第一次 fired 启动 timer，期间所有 fired
+        # 都被吞掉，timer 到点才真正 query 一次。query_now 本身可能阻塞 ~1s（UIA）
+        # 所以一定要节流，否则主线程被事件队列淹没。
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(HOOK_DEBOUNCE_MS)
+        self._debounce.timeout.connect(lambda: self.emit_current("winevent"))
+        self._hook.fired.connect(self._on_hook_fired)
         try:
             import uiautomation as _uia  # type: ignore
             self._uia = _uia
@@ -123,6 +139,15 @@ class WindowsMonitor(WindowMonitor):
             self._uia = None
             log.warning("uiautomation unavailable: %s", exc)
         self._uia_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="uia")
+        # UIA 不再同步阻塞主线程：每次 query_now 用上一次 walk 的结果，
+        # 同时后台再起一次 walk 刷新缓存。hwnd 切换/重用都自动 invalidate。
+        self._uia_cache_hwnd: Optional[int] = None
+        self._uia_cache_paths: list[str] = []
+        self._uia_inflight = False
+
+    def _on_hook_fired(self) -> None:
+        if not self._debounce.isActive():
+            self._debounce.start()
 
     def _start_native(self) -> None:
         self._hook.start()
@@ -133,6 +158,7 @@ class WindowsMonitor(WindowMonitor):
         except Exception:
             pass
         self._hook.wait(2000)
+        self._debounce.stop()
         self._uia_pool.shutdown(wait=False)
 
     def query_now(self) -> WindowInfo:
@@ -198,8 +224,10 @@ class WindowsMonitor(WindowMonitor):
             self._collect_via_uia(info, hwnd)
         if info.window_title:
             self._collect_from_title(info)
-        if pid:
-            self._collect_open_files(info, pid)
+        # 不调 psutil.open_files()：在 Windows 上它通过 NtQuerySystemInformation
+        # 遍历全系统句柄表，浏览器/Electron 进程上动辄 300ms+，且返回的多是
+        # 缓存/cookies/扩展文件，对用户没意义。文档路径靠 UIA + 标题 + 集成
+        # （Explorer/Terminal）足够了。
         if info.process and info.process.cwd:
             info.document_paths.append(
                 DocumentSource(
@@ -271,24 +299,37 @@ class WindowsMonitor(WindowMonitor):
         )
 
     def _collect_via_uia(self, info: WindowInfo, hwnd: int) -> None:
-        """UIA 树遍历放到线程池里跑，硬性 2s 超时。"""
-        fut = self._uia_pool.submit(self._uia_walk, hwnd)
-        try:
-            paths = fut.result(timeout=UIA_TIMEOUT_SEC)
-        except FuturesTimeout:
-            info.errors.append("UIA walk timeout")
-            fut.cancel()
-            return
-        except Exception as exc:
-            info.errors.append(f"UIA walk: {exc}")
-            return
-        for path in paths:
-            info.document_paths.append(
-                DocumentSource(
-                    path=path, kind=classify_path(path),
-                    source="accessibility", confidence=0.9,
+        """UIA 树遍历完全异步：用上一次 walk 的缓存填充当前结果，
+        再后台启一个新的 walk 刷新缓存。绝不让主线程等 UIA。"""
+        if self._uia_cache_hwnd == hwnd:
+            for path in self._uia_cache_paths:
+                info.document_paths.append(
+                    DocumentSource(
+                        path=path, kind=classify_path(path),
+                        source="accessibility", confidence=0.9,
+                    )
                 )
-            )
+        else:
+            # 焦点切到新窗口，旧缓存对当前窗口无效，清掉
+            self._uia_cache_hwnd = hwnd
+            self._uia_cache_paths = []
+
+        if self._uia_inflight:
+            return
+        self._uia_inflight = True
+        fut = self._uia_pool.submit(self._uia_walk, hwnd)
+
+        def _store(f, hwnd=hwnd) -> None:
+            try:
+                paths = f.result()
+            except Exception:
+                paths = []
+            # 回调在 worker 线程；GIL 让单次赋值原子，无需锁
+            if self._uia_cache_hwnd == hwnd:
+                self._uia_cache_paths = paths
+            self._uia_inflight = False
+
+        fut.add_done_callback(_store)
 
     def _uia_walk(self, hwnd: int) -> list[str]:
         auto = self._uia
@@ -339,17 +380,3 @@ class WindowsMonitor(WindowMonitor):
                 )
             )
 
-    def _collect_open_files(self, info: WindowInfo, pid: int) -> None:
-        try:
-            opened = psutil.Process(pid).open_files()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            return
-        for f in opened:
-            if not is_interesting_path(f.path):
-                continue
-            info.document_paths.append(
-                DocumentSource(
-                    path=f.path, kind=classify_path(f.path),
-                    source="fd_scan", confidence=0.3,
-                )
-            )
