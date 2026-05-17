@@ -152,23 +152,29 @@ async fn macos_finder(info: &WindowInfo) -> Option<FileManagerState> {
         return None;
     }
     tokio::task::spawn_blocking(|| {
+        // Important: `repeat with w in windows` inside `tell application "Finder"`
+        // is silently reinterpreted as iterating over the items in the front window
+        // (a long-standing Finder/AS quirk). We MUST materialize the list first via
+        // `set wList to Finder windows`. `Finder windows` (not just `windows`) also
+        // excludes the desktop pseudo-window so we don't get a weird desktop entry.
         let script = r#"
 tell application "Finder"
     set outText to ""
     try
-        repeat with itemRef in (get selection)
+        set sList to (get selection)
+        repeat with itemRef in sList
             try
                 set outText to outText & "S|" & (POSIX path of (itemRef as alias)) & linefeed
             end try
         end repeat
     end try
+    set frontWinId to -1
     try
-        set frontWinId to id of front window
-    on error
-        set frontWinId to -1
+        set frontWinId to id of front Finder window
     end try
     try
-        repeat with w in windows
+        set wList to Finder windows
+        repeat with w in wList
             try
                 set targetPath to POSIX path of (target of w as alias)
                 set wid to id of w
@@ -180,6 +186,14 @@ tell application "Finder"
             end try
         end repeat
     end try
+    -- Desktop fallback: no Finder windows open, but user is interacting with
+    -- icons on the desktop -> surface ~/Desktop as the active folder.
+    if outText is "" then
+        try
+            set deskPath to POSIX path of (desktop as alias)
+            set outText to outText & "W*|desktop|" & deskPath & linefeed
+        end try
+    end if
     return outText
 end tell
 "#;
