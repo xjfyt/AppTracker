@@ -104,26 +104,6 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.tauri_args }}
-
-      # Windows portable: ship the raw release binary alongside the NSIS/MSI
-      # installers. Requires WebView2 runtime on the user's system (preinstalled
-      # on Windows 11; widely auto-installed via Windows Update on Windows 10).
-      - name: Upload Windows portable exe
-        if: matrix.label == 'windows-x86_64'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $version = "${{ steps.tag.outputs.value }}".TrimStart("v")
-          $src = "target/release/AppTracker.exe"
-          if (-not (Test-Path $src)) {
-            Write-Error "Portable binary not found at $src"
-            exit 1
-          }
-          $dst = "AppTracker_${version}_x64-portable.exe"
-          Copy-Item $src $dst
-          gh release upload "${{ steps.tag.outputs.value }}" $dst --clobber
-        working-directory: ${{ github.workspace }}
           releaseBody: |
             # AppTracker ${{ steps.tag.outputs.value }}
 
@@ -161,7 +141,7 @@ jobs:
 
             ## 安装
 
-            - **Windows**：双击 `.exe`（NSIS）或 `.msi` 走系统安装流程
+            - **Windows**：双击 `.exe`（NSIS）或 `.msi` 走系统安装流程；或下载 `*-portable.exe` 直接运行（免安装）
             - **macOS**：打开 `.dmg`，拖 `AppTracker.app` 到 *应用程序*；首次启动右键打开通过 Gatekeeper（未公证）
             - **Linux deb**：`sudo apt install ./apptracker_*_<arch>.deb`
             - **Linux AppImage**：`chmod +x ./AppTracker_*.AppImage && ./AppTracker_*.AppImage`
@@ -178,3 +158,22 @@ jobs:
             ---
 
             🤖 Built with [tauri-action](https://github.com/tauri-apps/tauri-action)
+
+      # Windows portable: ship the raw release binary alongside the NSIS/MSI
+      # installers. Requires WebView2 runtime on the user's system (preinstalled
+      # on Windows 11; widely auto-installed via Windows Update on Windows 10).
+      - name: Upload Windows portable exe
+        if: matrix.label == 'windows-x86_64'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${{ steps.tag.outputs.value }}".TrimStart("v")
+          $src = "target/release/AppTracker.exe"
+          if (-not (Test-Path $src)) {
+            Write-Error "Portable binary not found at $src"
+            exit 1
+          }
+          $dst = "AppTracker_${version}_x64-portable.exe"
+          Copy-Item $src $dst
+          gh release upload "${{ steps.tag.outputs.value }}" $dst --clobber
