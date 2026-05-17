@@ -1,4 +1,5 @@
 use crate::models::{ActivityStats, BrowserTab, Snapshot, TrackerEvent, WindowInfo};
+use crate::tools::looks_like_browser;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -54,9 +55,7 @@ impl TrackerState {
     pub fn set_capture_enabled(&self, enabled: bool) {
         let prev = self.capture_enabled.swap(enabled, Ordering::Relaxed);
         if prev != enabled {
-            let _ = self
-                .tx
-                .send(TrackerEvent::new("capture_changed", &enabled));
+            let _ = self.tx.send(TrackerEvent::new("capture_changed", &enabled));
         }
     }
 
@@ -109,7 +108,13 @@ impl TrackerState {
             let mut inner = self.inner.write().await;
             inner.browser_tab = Some(tab.clone());
             if let Some(window) = inner.window.as_mut() {
-                window.browser_tab = Some(tab.clone());
+                let executable = window
+                    .process
+                    .as_ref()
+                    .and_then(|p| p.executable.as_deref());
+                if looks_like_browser(executable, Some(&window.app_name)) {
+                    window.browser_tab = Some(tab.clone());
+                }
             }
         }
         let _ = self.tx.send(TrackerEvent::new("browser_tab_updated", &tab));

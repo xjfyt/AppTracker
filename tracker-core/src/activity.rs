@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 struct ActivityCounters {
     events: VecDeque<(Instant, &'static str)>,
+    mouse_moves: VecDeque<(Instant, f64)>,
     last_mouse_pos: Option<(f64, f64)>,
-    mouse_distance: f64,
     last_input: Instant,
 }
 
@@ -17,8 +17,8 @@ impl Default for ActivityCounters {
     fn default() -> Self {
         Self {
             events: VecDeque::new(),
+            mouse_moves: VecDeque::new(),
             last_mouse_pos: None,
-            mouse_distance: 0.0,
             last_input: Instant::now(),
         }
     }
@@ -49,7 +49,10 @@ pub fn spawn_activity_monitor(state: TrackerState, window_seconds: u64) {
                             if let Some((px, py)) = counters.last_mouse_pos {
                                 let dx = x - px;
                                 let dy = y - py;
-                                counters.mouse_distance += (dx * dx + dy * dy).sqrt();
+                                let distance = (dx * dx + dy * dy).sqrt();
+                                if distance.is_finite() && distance > 0.0 {
+                                    counters.mouse_moves.push_back((Instant::now(), distance));
+                                }
                             }
                             counters.last_mouse_pos = Some((x, y));
                             counters.last_input = Instant::now();
@@ -82,6 +85,14 @@ pub fn spawn_activity_monitor(state: TrackerState, window_seconds: u64) {
                 {
                     counters.events.pop_front();
                 }
+                while counters
+                    .mouse_moves
+                    .front()
+                    .map(|(at, _)| *at < cutoff)
+                    .unwrap_or(false)
+                {
+                    counters.mouse_moves.pop_front();
+                }
                 let keys = counters.events.iter().filter(|(_, k)| *k == "key").count() as u64;
                 let clicks = counters
                     .events
@@ -93,13 +104,14 @@ pub fn spawn_activity_monitor(state: TrackerState, window_seconds: u64) {
                     .iter()
                     .filter(|(_, k)| *k == "scroll")
                     .count() as u64;
+                let mouse_distance = counters.mouse_moves.iter().map(|(_, d)| *d).sum();
                 ActivityStats {
                     timestamp: now_ts(),
                     window_seconds,
                     keys_count: keys,
                     clicks_count: clicks,
                     scrolls_count: scrolls,
-                    mouse_distance_px: counters.mouse_distance,
+                    mouse_distance_px: mouse_distance,
                     idle_seconds: counters.last_input.elapsed().as_secs_f64(),
                 }
             };
