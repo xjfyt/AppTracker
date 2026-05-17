@@ -7,7 +7,7 @@ use crate::models::{DocumentCategory, DocumentSource, WindowInfo};
 use crate::platform::active_window;
 use crate::state::TrackerState;
 use crate::tools::{dedupe_documents, likely_document_name_from_title};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -286,6 +286,7 @@ fn carry_enrich_only_docs(current: &WindowInfo, info: &mut WindowInfo) {
 struct DocumentMemory {
     by_process: HashMap<String, HashMap<String, String>>,
     global: HashMap<String, String>,
+    global_ambiguous: HashSet<String>,
 }
 
 impl DocumentMemory {
@@ -313,7 +314,17 @@ impl DocumentMemory {
             };
             let key = normalize_name(name);
             process_docs.insert(key.clone(), doc.path.clone());
-            self.global.insert(key, doc.path.clone());
+            match self.global.get(&key) {
+                Some(existing) if existing != &doc.path => {
+                    self.global.remove(&key);
+                    self.global_ambiguous.insert(key);
+                }
+                Some(_) => {}
+                None if !self.global_ambiguous.contains(&key) => {
+                    self.global.insert(key, doc.path.clone());
+                }
+                None => {}
+            }
         }
     }
 
