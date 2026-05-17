@@ -71,72 +71,121 @@ pub async fn start_agent(config: AgentConfig) -> anyhow::Result<AgentHandle> {
 }
 
 fn spawn_window_monitor(state: TrackerState, poll_interval_ms: u64) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_millis(poll_interval_ms.max(100)));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut last_identity = String::new();
-        let mut last_enrich_key = String::new();
-        let mut last_enrich_at = Instant::now() - Duration::from_secs(10);
-        let document_memory = Arc::new(Mutex::new(DocumentMemory::default()));
-        let (enrich_tx, enrich_rx) = tokio::sync::watch::channel(None::<WindowInfo>);
-        spawn_window_enrichment_worker(state.clone(), document_memory.clone(), enrich_rx);
-        loop {
-            ticker.tick().await;
-            if state.is_paused() {
-                continue;
-            }
-            match active_window().await {
-                Ok(mut info) => {
-                    apply_document_memory(&document_memory, &mut info);
-                    let identity = fast_window_identity(&info);
-                    if identity != last_identity {
-                        last_identity = identity;
-                        // 把先前富化得到的 office / UIA / 文件管理器 / 终端 数据驮过来，
-                        // 否则一旦 WPS/Notepad 标题闪动（脏标记、页码变化等）就会
-                        // 被这条 basic-only 的更新覆盖掉。
-                        if let Some(current) = state.current_window().await {
-                            if same_window(&current, &info) {
-                                carry_enrich_only_docs(&current, &mut info);
-                            }
-                        }
-                        state.update_window(info.clone()).await;
-                    }
+    tokio::spawn(supervised("window_monitor", move || {
+        let state = state.clone();
+        async move { run_window_monitor(state, poll_interval_ms).await }
+    }))
+}
 
-                    let enrich_key = foreground_match_key(&info);
-                    if enrich_key != last_enrich_key
-                        || last_enrich_at.elapsed() >= Duration::from_millis(900)
-                    {
-                        last_enrich_key = enrich_key;
-                        last_enrich_at = Instant::now();
-                        let _ = enrich_tx.send(Some(info));
+async fn run_window_monitor(state: TrackerState, poll_interval_ms: u64) {
+    let mut ticker = tokio::time::interval(Duration::from_millis(poll_interval_ms.max(100)));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_identity = String::new();
+    let mut last_enrich_key = String::new();
+    let mut last_enrich_at = Instant::now() - Duration::from_secs(10);
+    let document_memory = Arc::new(Mutex::new(DocumentMemory::default()));
+    let (enrich_tx, enrich_rx) = tokio::sync::watch::channel(None::<WindowInfo>);
+    spawn_window_enrichment_worker(state.clone(), document_memory.clone(), enrich_rx);
+    loop {
+        ticker.tick().await;
+        if state.is_paused() {
+            continue;
+        }
+        match active_window().await {
+            Ok(mut info) => {
+                apply_document_memory(&document_memory, &mut info);
+                let identity = fast_window_identity(&info);
+                if identity != last_identity {
+                    last_identity = identity;
+                    // 把先前富化得到的 office / UIA / 文件管理器 / 终端 数据驮过来，
+                    // 否则一旦 WPS/Notepad 标题闪动（脏标记、页码变化等）就会
+                    // 被这条 basic-only 的更新覆盖掉。
+                    if let Some(current) = state.current_window().await {
+                        if same_window(&current, &info) {
+                            carry_enrich_only_docs(&current, &mut info);
+                        }
                     }
+                    state.update_window(info.clone()).await;
                 }
-                Err(exc) => {
-                    tracing::debug!(error = %exc, "active window query failed");
+
+                let enrich_key = foreground_match_key(&info);
+                if enrich_key != last_enrich_key
+                    || last_enrich_at.elapsed() >= Duration::from_millis(900)
+                {
+                    last_enrich_key = enrich_key;
+                    last_enrich_at = Instant::now();
+                    let _ = enrich_tx.send(Some(info));
                 }
+            }
+            Err(exc) => {
+                tracing::debug!(error = %exc, "active window query failed");
             }
         }
-    })
+    }
 }
 
 fn spawn_window_enrichment_worker(
     state: TrackerState,
     document_memory: Arc<Mutex<DocumentMemory>>,
-    mut rx: tokio::sync::watch::Receiver<Option<WindowInfo>>,
+    rx: tokio::sync::watch::Receiver<Option<WindowInfo>>,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        while rx.changed().await.is_ok() {
-            let Some(info) = rx.borrow_and_update().clone() else {
-                continue;
-            };
-            let expected_window_key = window_identity_key(&info);
-            let mut enriched = enrich_window(info).await;
-            apply_document_memory(&document_memory, &mut enriched);
-            if should_publish_enriched(&state, &expected_window_key, &enriched).await {
-                state.update_window(enriched).await;
+    tokio::spawn(supervised("window_enrichment", move || {
+        let state = state.clone();
+        let document_memory = document_memory.clone();
+        let rx = rx.clone();
+        async move { run_window_enrichment_worker(state, document_memory, rx).await }
+    }))
+}
+
+async fn run_window_enrichment_worker(
+    state: TrackerState,
+    document_memory: Arc<Mutex<DocumentMemory>>,
+    mut rx: tokio::sync::watch::Receiver<Option<WindowInfo>>,
+) {
+    while rx.changed().await.is_ok() {
+        let Some(info) = rx.borrow_and_update().clone() else {
+            continue;
+        };
+        let expected_window_key = window_identity_key(&info);
+        let mut enriched = enrich_window(info).await;
+        apply_document_memory(&document_memory, &mut enriched);
+        if should_publish_enriched(&state, &expected_window_key, &enriched).await {
+            state.update_window(enriched).await;
+        }
+    }
+}
+
+/// Restart `make_fut` if its task panics. Logs (and `crash.log` captures the
+/// backtrace via [`crate::diagnostics::install_panic_hook`]). On clean exit
+/// (the future returned normally), don't restart — the worker is done.
+async fn supervised<F, Fut>(name: &'static str, mut make_fut: F)
+where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let mut attempt = 0u32;
+    loop {
+        let handle = tokio::spawn(make_fut());
+        match handle.await {
+            Ok(()) => {
+                tracing::warn!(worker = name, attempt, "worker exited cleanly");
+                return;
+            }
+            Err(join_err) if join_err.is_panic() => {
+                attempt += 1;
+                tracing::error!(
+                    worker = name,
+                    attempt,
+                    "worker panicked (see ~/.active_tracker/crash.log); restarting in 2s",
+                );
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Err(_) => {
+                tracing::debug!(worker = name, "worker cancelled");
+                return;
             }
         }
-    })
+    }
 }
 
 async fn should_publish_enriched(
@@ -208,6 +257,10 @@ fn is_enrich_only_source(source: &str) -> bool {
         || source.starts_with("browser:")
         || source.starts_with("editor:")
         || source.starts_with("lsof")
+        || source.starts_with("fd")
+        || source.starts_with("libreoffice:")
+        || source.starts_with("atspi:")
+        || source.starts_with("dbus:")
 }
 
 fn carry_enrich_only_docs(current: &WindowInfo, info: &mut WindowInfo) {

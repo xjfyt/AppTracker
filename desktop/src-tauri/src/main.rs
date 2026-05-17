@@ -1,6 +1,7 @@
-use tracker_core::{start_agent, AgentConfig};
+use tracker_core::{diagnostics, start_agent, AgentConfig};
 
 fn main() {
+    diagnostics::install_panic_hook();
     tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG")

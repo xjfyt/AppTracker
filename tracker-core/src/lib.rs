@@ -5,6 +5,7 @@ pub mod api;
 pub mod bridge;
 #[cfg(feature = "capture")]
 pub mod capture;
+pub mod diagnostics;
 pub mod integrations;
 pub mod models;
 pub mod platform;
