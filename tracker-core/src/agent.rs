@@ -204,6 +204,10 @@ fn is_enrich_only_source(source: &str) -> bool {
         || source.starts_with("terminal:")
         || source.starts_with("office:")
         || source.starts_with("uia:")
+        || source.starts_with("ax:")
+        || source.starts_with("browser:")
+        || source.starts_with("editor:")
+        || source.starts_with("lsof")
 }
 
 fn carry_enrich_only_docs(current: &WindowInfo, info: &mut WindowInfo) {
