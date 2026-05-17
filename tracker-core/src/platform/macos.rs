@@ -101,22 +101,16 @@ tell application "System Events"
     return appName & tab & pidVal & tab & bundleVal & tab & titleVal & tab & xVal & tab & yVal & tab & wVal & tab & hVal
 end tell
 "#;
-    let output = Command::new("osascript").arg("-e").arg(script).output();
-    let output = match output {
-        Ok(out) => out,
-        Err(exc) => {
-            info.errors.push(format!("osascript unavailable: {exc}"));
-            return Ok(info);
-        }
+    let Some(text) = run_osascript(script, Duration::from_millis(900)) else {
+        info.errors
+            .push("osascript unavailable, failed, or timed out".to_string());
+        return Ok(info);
     };
-    if !output.status.success() {
-        info.errors.push(format!(
-            "osascript failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+    if text.trim().is_empty() {
+        info.errors
+            .push("osascript returned no active window".to_string());
         return Ok(info);
     }
-    let text = String::from_utf8_lossy(&output.stdout);
     let parts = text.trim_end().split('\t').collect::<Vec<_>>();
     info.app_name = parts.get(0).copied().unwrap_or_default().to_string();
     let pid = parts.get(1).and_then(|s| s.parse::<u32>().ok());
@@ -350,8 +344,7 @@ fn parse_document_lines(text: &str, default_confidence: f32) -> Vec<DocumentSour
         } else {
             default_confidence
         };
-        if let Some(doc) =
-            document_from_existing_path(value, source, conf, DocumentCategory::User)
+        if let Some(doc) = document_from_existing_path(value, source, conf, DocumentCategory::User)
         {
             out.push(doc);
             continue;
@@ -480,6 +473,9 @@ fn run_osascript(script: &str, timeout: Duration) -> Option<String> {
     loop {
         if child.try_wait().ok().flatten().is_some() {
             let output = child.wait_with_output().ok()?;
+            if !output.status.success() {
+                return None;
+            }
             return Some(String::from_utf8_lossy(&output.stdout).to_string());
         }
         if started.elapsed() >= timeout {

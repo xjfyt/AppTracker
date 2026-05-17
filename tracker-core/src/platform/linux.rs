@@ -5,7 +5,8 @@ use crate::tools::{
     likely_document_name_from_title,
 };
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 pub async fn active_window() -> anyhow::Result<WindowInfo> {
     tokio::task::spawn_blocking(query_active_window).await?
@@ -23,10 +24,9 @@ pub async fn enrich_platform_window_documents(mut info: WindowInfo) -> WindowInf
         .unwrap_or_default();
 
     // /proc/fd + cmdline lookups are sync; do them on a blocking thread.
-    let fd_docs =
-        tokio::task::spawn_blocking(move || collect_documents(pid, &bundle, &title))
-            .await
-            .unwrap_or_default();
+    let fd_docs = tokio::task::spawn_blocking(move || collect_documents(pid, &bundle, &title))
+        .await
+        .unwrap_or_default();
     info.document_paths.extend(fd_docs);
 
     // AT-SPI is dbus-based and lives in the tokio runtime; cheap to await
@@ -195,11 +195,30 @@ fn active_window_id_from_xprop() -> Option<String> {
 }
 
 fn cmd_output(cmd: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(cmd).args(args).output().ok()?;
-    if !out.status.success() {
-        return None;
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let timeout = Duration::from_millis(700);
+    let started = Instant::now();
+    loop {
+        if child.try_wait().ok().flatten().is_some() {
+            let out = child.wait_with_output().ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            return Some(String::from_utf8_lossy(&out.stdout).to_string());
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            tracing::warn!(command = cmd, "linux window helper command timed out");
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
     }
-    Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 fn parse_xprop_string(text: &str, key: &str) -> Option<String> {

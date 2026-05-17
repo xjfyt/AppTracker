@@ -1,6 +1,8 @@
 use crate::models::{FileManagerState, FileManagerWindow, WindowInfo};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-use std::process::Command;
+use std::process::{Command, Stdio};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use std::time::{Duration, Instant};
 
 pub async fn query(info: &WindowInfo) -> Option<FileManagerState> {
     #[cfg(target_os = "windows")]
@@ -64,25 +66,50 @@ foreach ($w in $shell.Windows()) {{
 }}
 "#
         );
-        let out = Command::new("powershell.exe")
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &script,
-            ])
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        parse_windows_explorer(&decode_process_output(&out.stdout))
+        let text = run_powershell_utf8(&script, Duration::from_millis(1500))?;
+        parse_windows_explorer(&text)
     })
     .await
     .ok()
     .flatten()
+}
+
+#[cfg(target_os = "windows")]
+fn run_powershell_utf8(script: &str, timeout: Duration) -> Option<String> {
+    let mut child = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let started = Instant::now();
+    loop {
+        if child.try_wait().ok().flatten().is_some() {
+            let output = child.wait_with_output().ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            return Some(decode_process_output(&output.stdout));
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            tracing::warn!(
+                timeout_ms = timeout.as_millis() as u64,
+                "windows explorer COM query timed out",
+            );
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -197,19 +224,43 @@ tell application "Finder"
     return outText
 end tell
 "#;
-        let out = Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        parse_finder(&String::from_utf8_lossy(&out.stdout))
+        let text = run_osascript(script, Duration::from_millis(1200))?;
+        parse_finder(&text)
     })
     .await
     .ok()
     .flatten()
+}
+
+#[cfg(target_os = "macos")]
+fn run_osascript(script: &str, timeout: Duration) -> Option<String> {
+    let mut child = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    loop {
+        if child.try_wait().ok().flatten().is_some() {
+            let output = child.wait_with_output().ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            return Some(String::from_utf8_lossy(&output.stdout).to_string());
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            tracing::warn!(
+                timeout_ms = timeout.as_millis() as u64,
+                "finder AppleScript query timed out",
+            );
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 
 #[cfg(target_os = "macos")]
