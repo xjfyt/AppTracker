@@ -21,16 +21,65 @@ const INTERESTING_EXTENSIONS: &[&str] = &[
 /// FD scans over a process holding many tmp/db/log files in $HOME would otherwise
 /// flood the doc list.
 const FD_SCAN_DOC_EXTENSIONS: &[&str] = &[
-    ".doc", ".docx", ".odt", ".rtf", ".txt", ".md", ".markdown", ".pdf", ".xls", ".xlsx", ".ods",
-    ".csv", ".tsv", ".ppt", ".pptx", ".odp", ".key", ".pages", ".numbers", ".epub", ".wps",
-    ".wpt", ".et", ".ett", ".dps", ".dpt", ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css",
-    ".scss", ".java", ".kt", ".swift", ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".rb", ".php",
-    ".sh", ".sql", ".yaml", ".yml", ".toml", ".json", ".xml",
+    ".doc",
+    ".docx",
+    ".odt",
+    ".rtf",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".pdf",
+    ".xls",
+    ".xlsx",
+    ".ods",
+    ".csv",
+    ".tsv",
+    ".ppt",
+    ".pptx",
+    ".odp",
+    ".key",
+    ".pages",
+    ".numbers",
+    ".epub",
+    ".wps",
+    ".wpt",
+    ".et",
+    ".ett",
+    ".dps",
+    ".dpt",
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".html",
+    ".css",
+    ".scss",
+    ".java",
+    ".kt",
+    ".swift",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".rs",
+    ".go",
+    ".rb",
+    ".php",
+    ".sh",
+    ".sql",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".json",
+    ".xml",
 ];
 
 pub fn has_fd_scan_extension(path: &str) -> bool {
     let lower = path.to_lowercase();
-    FD_SCAN_DOC_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+    FD_SCAN_DOC_EXTENSIONS
+        .iter()
+        .any(|ext| lower.ends_with(ext))
 }
 
 const BORING_PATH_FRAGMENTS: &[&str] = &[
@@ -109,7 +158,11 @@ pub fn path_under(path: &str, dir: &str) -> bool {
     if p == d {
         return true;
     }
-    let needle = if d.ends_with('/') { d.clone() } else { format!("{}/", d) };
+    let needle = if d.ends_with('/') {
+        d.clone()
+    } else {
+        format!("{}/", d)
+    };
     p.starts_with(&needle)
 }
 
@@ -402,9 +455,13 @@ mod tests {
             .unwrap()
             .join("active_tracker_知识库演进.md");
         std::fs::write(&path, "# test").unwrap();
-        let doc =
-            document_from_existing_path(&path.to_string_lossy(), "test", 1.0, DocumentCategory::User)
-                .unwrap();
+        let doc = document_from_existing_path(
+            &path.to_string_lossy(),
+            "test",
+            1.0,
+            DocumentCategory::User,
+        )
+        .unwrap();
         assert!(doc.path.contains("知识库演进.md"));
         assert_eq!(doc.kind, "file");
         let _ = std::fs::remove_file(path);

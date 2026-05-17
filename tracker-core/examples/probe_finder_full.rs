@@ -7,7 +7,11 @@ async fn main() {
         app_bundle_id: Some("com.apple.finder".to_string()),
         app_name: "Finder".to_string(),
         platform: "darwin".to_string(),
-        process: Some(ProcessInfo { pid: 718, name: "Finder".to_string(), ..Default::default() }),
+        process: Some(ProcessInfo {
+            pid: 718,
+            name: "Finder".to_string(),
+            ..Default::default()
+        }),
         ..Default::default()
     };
     let enriched = enrich_window(info).await;

@@ -4,7 +4,9 @@ pub mod linux_dbus;
 pub mod shell_files;
 pub mod terminal;
 
-use crate::models::{DocumentCategory, DocumentSource, FileManagerState, TerminalContext, WindowInfo};
+use crate::models::{
+    DocumentCategory, DocumentSource, FileManagerState, TerminalContext, WindowInfo,
+};
 use crate::platform::enrich_platform_window_documents;
 use crate::tools::{classify_path, dedupe_documents, path_under};
 use std::path::Path;

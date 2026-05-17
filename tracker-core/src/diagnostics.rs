@@ -33,9 +33,7 @@ fn write_crash(info: &PanicHookInfo) {
         .name()
         .unwrap_or("unnamed")
         .to_string();
-    let entry = format!(
-        "==== panic @ ts={ts} thread={thread} ====\n{info}\nbacktrace:\n{bt}\n\n"
-    );
+    let entry = format!("==== panic @ ts={ts} thread={thread} ====\n{info}\nbacktrace:\n{bt}\n\n");
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

@@ -13,7 +13,11 @@ async fn main() {
     let title = args.next().unwrap_or_default();
 
     let mut info = WindowInfo {
-        app_bundle_id: if bundle.is_empty() { None } else { Some(bundle) },
+        app_bundle_id: if bundle.is_empty() {
+            None
+        } else {
+            Some(bundle)
+        },
         window_title: title,
         process: Some(ProcessInfo {
             pid,

@@ -280,12 +280,9 @@ fn parse_document_lines(text: &str, confidence: f32) -> Vec<DocumentSource> {
             continue;
         }
         for candidate in crate::tools::extract_paths_from_title(value) {
-            if let Some(doc) = document_from_existing_path(
-                &candidate,
-                source,
-                confidence,
-                DocumentCategory::User,
-            ) {
+            if let Some(doc) =
+                document_from_existing_path(&candidate, source, confidence, DocumentCategory::User)
+            {
                 out.push(doc);
             }
         }
