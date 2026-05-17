@@ -1,3 +1,8 @@
+// release 构建走 Windows GUI subsystem，避免双击 .exe 时弹出黑色控制台窗口。
+// debug 构建保留默认 console subsystem，方便看 tracing 日志。
+// macOS/Linux 上这个 attribute 是 no-op。
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use tracker_core::{diagnostics, start_agent, AgentConfig};
 
 fn main() {
