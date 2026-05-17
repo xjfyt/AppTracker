@@ -14,6 +14,25 @@ const INTERESTING_EXTENSIONS: &[&str] = &[
     ".dpt",
 ];
 
+/// Subset of [`INTERESTING_EXTENSIONS`] that represent files a user could
+/// reasonably be "working on" (documents, source code) — excludes media/archives
+/// to keep the FD-scan fallback (macOS `lsof`, Linux `/proc/PID/fd`) tight.
+/// `is_interesting_path` accepts anything under $HOME without a dot-prefix, so
+/// FD scans over a process holding many tmp/db/log files in $HOME would otherwise
+/// flood the doc list.
+const FD_SCAN_DOC_EXTENSIONS: &[&str] = &[
+    ".doc", ".docx", ".odt", ".rtf", ".txt", ".md", ".markdown", ".pdf", ".xls", ".xlsx", ".ods",
+    ".csv", ".tsv", ".ppt", ".pptx", ".odp", ".key", ".pages", ".numbers", ".epub", ".wps",
+    ".wpt", ".et", ".ett", ".dps", ".dpt", ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css",
+    ".scss", ".java", ".kt", ".swift", ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".rb", ".php",
+    ".sh", ".sql", ".yaml", ".yml", ".toml", ".json", ".xml",
+];
+
+pub fn has_fd_scan_extension(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    FD_SCAN_DOC_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
+}
+
 const BORING_PATH_FRAGMENTS: &[&str] = &[
     "/site-packages/",
     "/dist-packages/",

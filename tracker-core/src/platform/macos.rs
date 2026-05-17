@@ -448,7 +448,7 @@ fn lsof_documents(pid: u32, title_hints: &[String]) -> Vec<DocumentSource> {
                 // Tight filter: lsof returns lock/log/db files too, and `is_interesting_path`
                 // accepts anything under $HOME without dot-prefix. Restrict to known doc
                 // extensions unless the basename matches one of the window titles.
-                if !matches_title && !has_document_extension(path) {
+                if !matches_title && !crate::tools::has_fd_scan_extension(path) {
                     continue;
                 }
                 let (source, confidence) = if matches_title {
@@ -468,19 +468,6 @@ fn lsof_documents(pid: u32, title_hints: &[String]) -> Vec<DocumentSource> {
     docs
 }
 
-const LSOF_DOC_EXTENSIONS: &[&str] = &[
-    ".doc", ".docx", ".odt", ".rtf", ".txt", ".md", ".markdown", ".pdf", ".xls", ".xlsx", ".ods",
-    ".csv", ".tsv", ".ppt", ".pptx", ".odp", ".key", ".pages", ".numbers", ".epub", ".wps",
-    ".wpt", ".et", ".ett", ".dps", ".dpt", ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css",
-    ".scss", ".java", ".kt", ".swift", ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".rb", ".php",
-    ".sh", ".sql", ".yaml", ".yml", ".toml", ".json", ".xml",
-];
-
-fn has_document_extension(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    LSOF_DOC_EXTENSIONS.iter().any(|ext| lower.ends_with(ext))
-}
-
 fn run_osascript(script: &str, timeout: Duration) -> Option<String> {
     let mut child = Command::new("osascript")
         .arg("-e")
@@ -498,6 +485,11 @@ fn run_osascript(script: &str, timeout: Duration) -> Option<String> {
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
+            tracing::warn!(
+                timeout_ms = timeout.as_millis() as u64,
+                script_head = %script.lines().next().unwrap_or("").chars().take(60).collect::<String>(),
+                "osascript timed out — usually means an Automation permission dialog is blocking",
+            );
             return None;
         }
         std::thread::sleep(Duration::from_millis(25));

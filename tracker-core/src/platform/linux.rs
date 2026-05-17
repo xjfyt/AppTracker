@@ -1,9 +1,144 @@
 use super::{collect_title_and_cwd_documents, process_info};
-use crate::models::{WindowGeometry, WindowInfo};
+use crate::models::{DocumentCategory, DocumentSource, WindowGeometry, WindowInfo};
+use crate::tools::{
+    dedupe_documents, document_from_existing_path, has_fd_scan_extension,
+    likely_document_name_from_title,
+};
+use std::path::PathBuf;
 use std::process::Command;
 
 pub async fn active_window() -> anyhow::Result<WindowInfo> {
     tokio::task::spawn_blocking(query_active_window).await?
+}
+
+pub async fn enrich_platform_window_documents(mut info: WindowInfo) -> WindowInfo {
+    let Some(pid) = info.process.as_ref().map(|p| p.pid) else {
+        return info;
+    };
+    let title = info.window_title.clone();
+    let bundle = info
+        .process
+        .as_ref()
+        .and_then(|p| p.executable.clone())
+        .unwrap_or_default();
+
+    // /proc/fd + cmdline lookups are sync; do them on a blocking thread.
+    let fd_docs =
+        tokio::task::spawn_blocking(move || collect_documents(pid, &bundle, &title))
+            .await
+            .unwrap_or_default();
+    info.document_paths.extend(fd_docs);
+
+    // AT-SPI is dbus-based and lives in the tokio runtime; cheap to await
+    // here. The function itself short-circuits to None within ~700ms if
+    // accessibility isn't running.
+    let atspi_docs = crate::integrations::linux_dbus::document_url_for(&info).await;
+    info.document_paths.extend(atspi_docs);
+
+    info.document_paths = dedupe_documents(std::mem::take(&mut info.document_paths));
+    info
+}
+
+fn collect_documents(pid: u32, exe: &str, title: &str) -> Vec<DocumentSource> {
+    let mut docs = Vec::new();
+    // /proc/PID/fd — Linux's native equivalent of lsof; no extra binary needed
+    docs.extend(proc_fd_documents(pid, title));
+    // App-specific hints (libreoffice via /proc/PID/cmdline arguments, etc.)
+    docs.extend(per_executable_documents(pid, exe));
+    docs
+}
+
+/// Read /proc/PID/fd/<n> symlinks and surface REG files matching either a known
+/// document extension or the basename embedded in the window title.
+fn proc_fd_documents(pid: u32, title: &str) -> Vec<DocumentSource> {
+    let dir = PathBuf::from(format!("/proc/{pid}/fd"));
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let title_basenames: std::collections::HashSet<String> = std::iter::once(title.to_string())
+        .filter_map(|t| {
+            let trimmed = t.trim().trim_matches('"');
+            if trimmed.is_empty() {
+                return None;
+            }
+            likely_document_name_from_title(trimmed).or_else(|| Some(trimmed.to_string()))
+        })
+        .collect();
+
+    let mut docs = Vec::new();
+    let mut count = 0usize;
+    for entry in entries.flatten() {
+        count += 1;
+        if count > 4000 {
+            tracing::warn!(pid, "proc_fd_documents: scan cap reached (4000)");
+            break;
+        }
+        let path = entry.path();
+        let Ok(target) = std::fs::read_link(&path) else {
+            continue;
+        };
+        let target_str = target.to_string_lossy().to_string();
+        // Skip non-file fds: sockets, pipes, anon_inodes, /dev/*, /proc/*
+        if !target_str.starts_with('/')
+            || target_str.starts_with("/dev/")
+            || target_str.starts_with("/proc/")
+            || target_str.starts_with("/sys/")
+            || target_str.contains("(deleted)")
+        {
+            continue;
+        }
+        let basename = std::path::Path::new(&target_str)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        let matches_title = !basename.is_empty() && title_basenames.contains(basename);
+        if !matches_title && !has_fd_scan_extension(&target_str) {
+            continue;
+        }
+        let (source, confidence) = if matches_title {
+            ("fd:title_match", 0.92f32)
+        } else {
+            ("fd", 0.45)
+        };
+        if let Some(doc) =
+            document_from_existing_path(&target_str, source, confidence, DocumentCategory::User)
+        {
+            docs.push(doc);
+        }
+    }
+    docs
+}
+
+/// Apps whose document path lives in their argv (LibreOffice opens with the
+/// file as first non-flag argument, similar for many CLI-launched editors).
+fn per_executable_documents(pid: u32, exe: &str) -> Vec<DocumentSource> {
+    let exe_lower = exe.to_lowercase();
+    let is_libreoffice = exe_lower.contains("soffice")
+        || exe_lower.contains("libreoffice")
+        || exe_lower.contains("oosplash");
+    if !is_libreoffice {
+        return Vec::new();
+    }
+    let cmdline_path = PathBuf::from(format!("/proc/{pid}/cmdline"));
+    let Ok(bytes) = std::fs::read(&cmdline_path) else {
+        return Vec::new();
+    };
+    let mut docs = Vec::new();
+    for arg in bytes.split(|b| *b == 0) {
+        if arg.is_empty() {
+            continue;
+        }
+        let s = String::from_utf8_lossy(arg);
+        if s.starts_with('-') {
+            continue;
+        }
+        if let Some(doc) =
+            document_from_existing_path(&s, "libreoffice:argv", 0.85, DocumentCategory::User)
+        {
+            docs.push(doc);
+        }
+    }
+    docs
 }
 
 fn query_active_window() -> anyhow::Result<WindowInfo> {

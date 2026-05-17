@@ -1,4 +1,6 @@
 pub mod file_manager;
+#[cfg(target_os = "linux")]
+pub mod linux_dbus;
 pub mod shell_files;
 pub mod terminal;
 

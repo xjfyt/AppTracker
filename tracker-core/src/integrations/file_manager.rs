@@ -247,7 +247,27 @@ fn parse_finder(text: &str) -> Option<FileManagerState> {
 }
 
 #[cfg(target_os = "linux")]
-async fn linux_file_manager(info: &WindowInfo) -> Option<FileManagerState> {
+const LINUX_FILE_MANAGER_HINTS: &[&str] = &[
+    "nautilus",
+    "org.gnome.nautilus",
+    "gnome-files",
+    "dolphin",
+    "org.kde.dolphin",
+    "nemo",
+    "caja",
+    "thunar",
+    "pcmanfm",
+    "pcmanfm-qt",
+    "krusader",
+    "doublecmd",
+    "nnn",
+    "ranger",
+    "spacefm",
+    "files",
+];
+
+#[cfg(target_os = "linux")]
+fn linux_detect_file_manager(info: &WindowInfo) -> bool {
     let exe = info
         .process
         .as_ref()
@@ -259,30 +279,36 @@ async fn linux_file_manager(info: &WindowInfo) -> Option<FileManagerState> {
         .as_deref()
         .unwrap_or_default()
         .to_lowercase();
-    let is_file_manager = exe.contains("nautilus")
-        || exe.contains("dolphin")
-        || class.contains("nautilus")
-        || class.contains("dolphin");
-    if !is_file_manager {
+    let name = info
+        .process
+        .as_ref()
+        .map(|p| p.name.to_lowercase())
+        .unwrap_or_default();
+    let app = info.app_name.to_lowercase();
+    let haystack = format!("{exe} {class} {name} {app}");
+    LINUX_FILE_MANAGER_HINTS
+        .iter()
+        .any(|hint| haystack.contains(hint))
+}
+
+#[cfg(target_os = "linux")]
+async fn linux_file_manager(info: &WindowInfo) -> Option<FileManagerState> {
+    if !linux_detect_file_manager(info) {
         return None;
     }
+    // 1) Try DBus (Nautilus / Dolphin / Nemo / Caja expose org.freedesktop.FileManager1)
+    //    and zbus call. Returns folder + selection in one go.
+    if let Some(state) = crate::integrations::linux_dbus::file_manager_state(info).await {
+        return Some(state);
+    }
+    // 2) Fallback: cwd + title parsing (the path many file managers stuff into
+    //    the window title — "Documents - Files", "Documents — Dolphin", etc.).
     let folder = info
         .process
         .as_ref()
         .and_then(|p| p.cwd.clone())
         .filter(|p| std::path::Path::new(p).is_dir())
-        .or_else(|| {
-            let title = info
-                .window_title
-                .split(|ch| ch == '\u{2014}' || ch == '\u{2013}')
-                .next()?
-                .trim();
-            if std::path::Path::new(title).is_dir() {
-                Some(title.to_string())
-            } else {
-                None
-            }
-        })?;
+        .or_else(|| linux_folder_from_title(&info.window_title))?;
     Some(FileManagerState {
         source: "linux_cwd_title".to_string(),
         windows: vec![FileManagerWindow {
@@ -292,4 +318,40 @@ async fn linux_file_manager(info: &WindowInfo) -> Option<FileManagerState> {
             is_active: true,
         }],
     })
+}
+
+/// Parse a folder path out of a file-manager window title. File managers
+/// usually put the current folder name (not full path) in the title, but some
+/// (Nautilus with "Always show paths") put the absolute path or "~/Documents".
+#[cfg(target_os = "linux")]
+fn linux_folder_from_title(title: &str) -> Option<String> {
+    let candidate = title
+        .split(|ch: char| ch == '\u{2014}' || ch == '\u{2013}' || ch == '-')
+        .next()?
+        .trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    // Direct path / ~/... / relative-to-home
+    let expanded = crate::tools::expand_user(candidate);
+    if std::path::Path::new(&expanded).is_dir() {
+        return Some(expanded);
+    }
+    // Bare folder name — search common roots
+    let home = dirs::home_dir()?;
+    for root in [
+        home.clone(),
+        home.join("Desktop"),
+        home.join("Documents"),
+        home.join("Downloads"),
+        home.join("Pictures"),
+        home.join("Videos"),
+        home.join("Music"),
+    ] {
+        let p = root.join(candidate);
+        if p.is_dir() {
+            return Some(p.to_string_lossy().to_string());
+        }
+    }
+    None
 }

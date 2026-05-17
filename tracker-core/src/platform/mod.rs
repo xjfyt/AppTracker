@@ -19,12 +19,14 @@ pub use self::linux::active_window;
 pub use self::macos::active_window;
 #[cfg(target_os = "windows")]
 pub use self::windows::active_window;
+#[cfg(target_os = "linux")]
+pub use self::linux::enrich_platform_window_documents;
 #[cfg(target_os = "macos")]
 pub use self::macos::enrich_platform_window_documents;
 #[cfg(target_os = "windows")]
 pub use self::windows::enrich_platform_window_documents;
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub async fn enrich_platform_window_documents(info: WindowInfo) -> WindowInfo {
     info
 }
