@@ -62,6 +62,8 @@ macOS / Linux 下文件名没有 `.exe` 后缀。该二进制即 AppTracker 桌�
 2. 在 Chromium 系浏览器打开 `chrome://extensions`（或 Firefox `about:debugging`），加载 `browser_extension/` 目录。
 3. 点击扩展图标 → **Sync**。如果 AppTracker 正在运行，扩展会自动通过 `/api/v1/bridge_token` 拉到 token 并连接。
 
+如果自动同步失败，桌面端 UI 的「浏览器插件 Key」区域会显示同一个 token，可直接复制到扩展的 Token 输入框。
+
 如需自定义端口或者手动粘贴 token，详见 [browser_extension/README.md](browser_extension/README.md)。
 
 ## 六、终端扩展安装

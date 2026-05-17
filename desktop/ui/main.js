@@ -15,6 +15,9 @@ const screenshotEl = document.querySelector("#screenshot");
 const screenshotHint = document.querySelector("#screenshotHint");
 const appBadge = document.querySelector("#appBadge");
 const showProcessToggle = document.querySelector("#showProcessPaths");
+const bridgeKeyEl = document.querySelector("#bridgeKey");
+const copyBridgeKeyBtn = document.querySelector("#copyBridgeKey");
+const bridgeKeyHint = document.querySelector("#bridgeKeyHint");
 const lightbox = document.querySelector("#lightbox");
 const lightboxImg = document.querySelector("#lightboxImg");
 const lightboxClose = document.querySelector(".lightbox-close");
@@ -55,6 +58,23 @@ showProcessToggle.addEventListener("change", async (ev) => {
   }).catch(() => {});
   applyShowProcessPaths(enabled);
   renderDocuments(latestDocuments);
+});
+
+copyBridgeKeyBtn.addEventListener("click", async () => {
+  const key = bridgeKeyEl.value.trim();
+  if (!key) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(key);
+    } else {
+      bridgeKeyEl.select();
+      document.execCommand("copy");
+      bridgeKeyEl.blur();
+    }
+    bridgeKeyHint.textContent = "已复制，可粘贴到浏览器插件 Token 输入框。";
+  } catch (_) {
+    bridgeKeyHint.textContent = "复制失败，请手动选中 Key 后复制。";
+  }
 });
 
 screenshotEl.addEventListener("dblclick", () => {
@@ -113,6 +133,18 @@ async function loadSnapshot() {
   renderSnapshot(snap);
 }
 
+async function loadBridgeKey() {
+  bridgeKeyEl.value = "";
+  bridgeKeyHint.textContent = "正在读取浏览器插件 Key...";
+  const res = await fetch(`${apiBase}/api/v1/bridge_token`);
+  if (!res.ok) throw new Error(`status ${res.status}`);
+  const data = await res.json();
+  bridgeKeyEl.value = data.token || "";
+  bridgeKeyHint.textContent = bridgeKeyEl.value
+    ? "安装浏览器插件后，可把此 Key 粘贴到插件 Token 输入框。"
+    : "未读取到 Key，请确认 AppTracker 核心已启动。";
+}
+
 function connect() {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
@@ -126,6 +158,10 @@ function connect() {
   statusEl.textContent = "connecting";
   statusEl.classList.remove("ok");
   loadSnapshot().catch(() => {});
+  loadBridgeKey().catch(() => {
+    bridgeKeyEl.value = "";
+    bridgeKeyHint.textContent = "Key 读取失败，请确认 API 地址正确。";
+  });
   const wsUrl = apiBase.replace(/^http/, "ws") + "/api/v1/ws";
   const socket = new WebSocket(wsUrl);
   ws = socket;

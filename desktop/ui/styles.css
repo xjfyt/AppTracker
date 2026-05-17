@@ -81,6 +81,24 @@ button, input { font: inherit; }
   background: white;
 }
 
+.token-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.token-row input {
+  min-width: 0;
+  border: 1px solid #ccd5e1;
+  border-radius: 6px;
+  padding: 8px 9px;
+  background: white;
+  color: #172033;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}
+.key-hint { margin-bottom: 14px; }
+
 .badge {
   border-radius: 999px;
   padding: 5px 10px;

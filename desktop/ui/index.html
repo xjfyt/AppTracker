@@ -56,6 +56,13 @@
       </section>
 
       <section class="panel">
+        <header class="panel-head"><h2>浏览器插件 Key</h2></header>
+        <div class="token-row">
+          <input id="bridgeKey" readonly placeholder="等待 AppTracker 生成 Key" />
+          <button id="copyBridgeKey" class="btn btn-primary" type="button">复制</button>
+        </div>
+        <div id="bridgeKeyHint" class="muted key-hint">安装浏览器插件后，可把此 Key 粘贴到插件 Token 输入框。</div>
+
         <header class="panel-head"><h2>浏览器 Tab</h2></header>
         <div id="browser" class="card-list empty">等待浏览器扩展连接</div>
 
