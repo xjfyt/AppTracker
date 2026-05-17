@@ -20,16 +20,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: macos-universal
+          - label: macos-aarch64
             os: macos-latest
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            tauri_args: "--target universal-apple-darwin"
+            rust_targets: aarch64-apple-darwin
+            tauri_args: "--target aarch64-apple-darwin"
+          - label: windows-x86_64
+            os: windows-latest
+            rust_targets: ""
+            tauri_args: ""
           - label: linux-x86_64
             os: ubuntu-22.04
             rust_targets: ""
             tauri_args: ""
-          - label: windows-x86_64
-            os: windows-latest
+          - label: linux-aarch64
+            os: ubuntu-22.04-arm
             rust_targets: ""
             tauri_args: ""
 
@@ -67,7 +71,7 @@ jobs:
           key: ${{ matrix.label }}
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-22.04'
+        if: startsWith(matrix.os, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -97,7 +101,60 @@ jobs:
           projectPath: desktop
           tagName: ${{ steps.tag.outputs.value }}
           releaseName: "AppTracker ${{ steps.tag.outputs.value }}"
-          releaseBody: "Auto-built release for ${{ steps.tag.outputs.value }}."
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.tauri_args }}
+          releaseBody: |
+            # AppTracker ${{ steps.tag.outputs.value }}
+
+            跨平台桌面活动追踪：实时检测前台应用、打开的文档/文件夹、shell 工作目录，可选窗口截图缩略图。
+            一个本地 HTTP/WebSocket API（默认 `:5007`，bridge token 落 `~/.active_tracker/`）给外部消费。
+
+            ## 支持平台
+
+            | 平台 | 架构 | 安装包 |
+            |---|---|---|
+            | Windows | x64 | `AppTracker_*_x64-setup.exe` (NSIS) / `AppTracker_*_x64_en-US.msi` |
+            | macOS | Apple Silicon (arm64) | `AppTracker_*_aarch64.dmg` / `AppTracker.app.tar.gz` |
+            | Linux | x86_64 | `apptracker_*_amd64.deb` / `AppTracker_*_amd64.AppImage` |
+            | Linux | arm64 | `apptracker_*_arm64.deb` / `AppTracker_*_arm64.AppImage` |
+
+            可执行文件统一命名 **AppTracker**。
+
+            ## 主要能力
+
+            - **窗口监听**：前台应用、标题、几何、进程详情
+            - **文档检测**（三平台对齐）：
+              - Windows：COM 拿 Office/WPS 当前文档 + UIA 树遍历 (Typora / VSCode / Obsidian / Notepad 等)
+              - macOS：AX (`AXDocument`/`AXURL`) + 各 App AppleScript dict (Word/Excel/PPT/Sublime/Chrome/Safari/Edge/Arc/Brave) + `lsof` 兜底
+              - Linux：`/proc/PID/fd` 扫描 + LibreOffice argv + AT-SPI via DBus
+            - **文件管理器集成**：Windows Explorer / macOS Finder / Linux Nautilus/Dolphin/Nemo/Caja/Thunar/...（含选中项）
+            - **终端 cwd**：shell integration (bash/zsh/fish/pwsh) + 进程树兜底
+            - **浏览器当前 Tab**：可选 `browser_extension/`（Chrome/Edge MV3）
+            - **窗口截图缩略图**：可开关，默认关，480px
+
+            ## 权限要求
+
+            - **macOS**：首次运行去 *系统设置 → 隐私与安全性 → 辅助功能* 勾选 AppTracker；浏览器/Office 检测会触发 *自动化* 授权对话框
+            - **Linux**：AT-SPI 路径需 `at-spi-bus-launcher` 在跑（GNOME/KDE 默认就有）；X11 下需 `xdotool` 或 `xprop`；Wayland 能力受限
+            - **Windows**：无需额外授权
+
+            ## 安装
+
+            - **Windows**：双击 `.exe`（NSIS）或 `.msi` 走系统安装流程
+            - **macOS**：打开 `.dmg`，拖 `AppTracker.app` 到 *应用程序*；首次启动右键打开通过 Gatekeeper（未公证）
+            - **Linux deb**：`sudo apt install ./apptracker_*_<arch>.deb`
+            - **Linux AppImage**：`chmod +x ./AppTracker_*.AppImage && ./AppTracker_*.AppImage`
+
+            ## 排查
+
+            异常崩溃看 `~/.active_tracker/crash.log`（含 backtrace）。后台 worker panic 后会自动重启 2s 一次。
+
+            ## 已知限制
+
+            - macOS `.app` 未公证，首次需右键打开通过 Gatekeeper
+            - Linux Wayland 下窗口监听能力受限（基本信息可拿，文档/选中项依赖 AT-SPI）
+
+            ---
+
+            🤖 Built with [tauri-action](https://github.com/tauri-apps/tauri-action)
