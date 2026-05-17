@@ -362,3 +362,103 @@ fn process_memory_key(info: &WindowInfo) -> Option<String> {
 fn normalize_name(name: &str) -> String {
     name.trim().to_lowercase()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ProcessInfo;
+
+    fn test_file_path(dir: &Path, name: &str) -> String {
+        let path = dir.join(name);
+        std::fs::write(&path, "test").unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    fn window_with_doc(pid: u32, exe: &str, path: String) -> WindowInfo {
+        WindowInfo {
+            process: Some(ProcessInfo {
+                pid,
+                name: exe.to_string(),
+                executable: Some(exe.to_string()),
+                ..Default::default()
+            }),
+            document_paths: vec![DocumentSource {
+                path,
+                kind: "file".to_string(),
+                source: "test".to_string(),
+                confidence: 1.0,
+                category: DocumentCategory::User,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn document_memory_does_not_resolve_ambiguous_global_name() {
+        let root = std::env::temp_dir().join(format!(
+            "apptracker-memory-{}",
+            crate::models::now_ts().to_bits()
+        ));
+        let dir_a = root.join("a");
+        let dir_b = root.join("b");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+        let path_a = test_file_path(&dir_a, "same.md");
+        let path_b = test_file_path(&dir_b, "same.md");
+
+        let mut memory = DocumentMemory::default();
+        let mut first = window_with_doc(1, "/tmp/editor-a", path_a);
+        memory.apply(&mut first);
+        let mut second = window_with_doc(2, "/tmp/editor-b", path_b);
+        memory.apply(&mut second);
+
+        let mut lookup = WindowInfo {
+            window_title: "same.md - Editor".to_string(),
+            process: Some(ProcessInfo {
+                pid: 3,
+                name: "editor-c".to_string(),
+                executable: Some("/tmp/editor-c".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        memory.apply(&mut lookup);
+
+        assert!(lookup
+            .document_paths
+            .iter()
+            .all(|doc| doc.source != "title_memory"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn document_memory_still_resolves_process_local_name() {
+        let root = std::env::temp_dir().join(format!(
+            "apptracker-memory-local-{}",
+            crate::models::now_ts().to_bits()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = test_file_path(&root, "local.md");
+
+        let mut memory = DocumentMemory::default();
+        let mut known = window_with_doc(9, "/tmp/editor", path.clone());
+        memory.apply(&mut known);
+        let mut lookup = WindowInfo {
+            window_title: "local.md - Editor".to_string(),
+            process: Some(ProcessInfo {
+                pid: 9,
+                name: "editor".to_string(),
+                executable: Some("/tmp/editor".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        memory.apply(&mut lookup);
+
+        assert!(lookup
+            .document_paths
+            .iter()
+            .any(|doc| doc.source == "title_memory" && doc.path == path));
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

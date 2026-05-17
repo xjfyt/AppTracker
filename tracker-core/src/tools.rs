@@ -474,4 +474,43 @@ mod tests {
             Some("知识库演进.md")
         );
     }
+
+    #[test]
+    fn browser_detection_uses_executable_and_app_name() {
+        assert!(looks_like_browser(
+            Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            None
+        ));
+        assert!(looks_like_browser(None, Some("Microsoft Edge")));
+        assert!(!looks_like_browser(
+            Some("/usr/bin/code"),
+            Some("Visual Studio Code")
+        ));
+    }
+
+    #[test]
+    fn redact_cmdline_masks_sensitive_values() {
+        let cmdline = vec![
+            "deploy".to_string(),
+            "--token".to_string(),
+            "sk-abcdefghijklmnopqrstuvwxyz".to_string(),
+            "--password=super-secret-value".to_string(),
+            "plain".to_string(),
+        ];
+        let (redacted, was_redacted) = redact_cmdline(&cmdline);
+        assert!(was_redacted);
+        assert_eq!(redacted[0], "deploy");
+        assert_ne!(redacted[2], "sk-abcdefghijklmnopqrstuvwxyz");
+        assert!(redacted[3].starts_with("--password="));
+        assert_eq!(redacted[4], "plain");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn file_url_decodes_posix_path() {
+        assert_eq!(
+            file_url_to_path("file:///Users/demo/My%20Doc.md").as_deref(),
+            Some("/Users/demo/My Doc.md")
+        );
+    }
 }
