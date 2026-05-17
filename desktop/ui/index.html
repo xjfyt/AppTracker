@@ -35,58 +35,86 @@
       </div>
     </header>
 
-    <main class="layout">
-      <section class="panel panel-window">
-        <header class="panel-head">
-          <h2>当前窗口</h2>
-          <span id="appBadge" class="chip chip-primary">无</span>
-        </header>
-        <div id="windowGrid" class="grid"></div>
+    <div class="app-shell">
+      <aside class="side-tabs" aria-label="页面切换">
+        <button class="side-tab active" data-view="overview" type="button">当前状态</button>
+        <button class="side-tab" data-view="diagnostics" type="button">诊断</button>
+      </aside>
 
-        <header class="panel-head panel-head-spaced">
-          <h3 class="section-title">文档 / 路径</h3>
-          <span class="spacer"></span>
-          <label class="switch tiny" title="同时显示来自进程上下文（cwd/启动目录）的路径">
-            <input id="showProcessPaths" type="checkbox" />
-            <span class="track"><span class="thumb"></span></span>
-            <span class="switch-label">显示进程上下文</span>
-          </label>
-        </header>
-        <div id="documents" class="card-list empty">暂无路径</div>
-      </section>
+      <main class="view-stack">
+        <section id="view-overview" class="view active">
+          <div class="layout">
+            <section class="panel panel-window">
+              <header class="panel-head">
+                <h2>当前窗口</h2>
+                <span id="appBadge" class="chip chip-primary">无</span>
+              </header>
+              <div id="windowGrid" class="grid"></div>
 
-      <section class="panel">
-        <header class="panel-head"><h2>浏览器插件 Key</h2></header>
-        <div class="token-row">
-          <input id="bridgeKey" readonly placeholder="等待 AppTracker 生成 Key" />
-          <button id="copyBridgeKey" class="btn btn-primary" type="button">复制</button>
-        </div>
-        <div id="bridgeKeyHint" class="muted key-hint">安装浏览器插件后，可把此 Key 粘贴到插件 Token 输入框。</div>
+              <header class="panel-head panel-head-spaced">
+                <h3 class="section-title">文档 / 路径</h3>
+                <span class="spacer"></span>
+                <label class="switch tiny" title="同时显示来自进程上下文（cwd/启动目录）的路径">
+                  <input id="showProcessPaths" type="checkbox" />
+                  <span class="track"><span class="thumb"></span></span>
+                  <span class="switch-label">显示进程上下文</span>
+                </label>
+              </header>
+              <div id="documents" class="card-list empty">暂无路径</div>
+            </section>
 
-        <header class="panel-head"><h2>浏览器 Tab</h2></header>
-        <div id="browser" class="card-list empty">等待浏览器扩展连接</div>
+            <section class="panel">
+              <header class="panel-head"><h2>浏览器插件 Key</h2></header>
+              <div class="token-row">
+                <input id="bridgeKey" readonly placeholder="等待 AppTracker 生成 Key" />
+                <button id="copyBridgeKey" class="btn btn-primary" type="button">复制</button>
+              </div>
+              <div id="bridgeKeyHint" class="muted key-hint">安装浏览器插件后，可把此 Key 粘贴到插件 Token 输入框。</div>
 
-        <header class="panel-head panel-head-spaced"><h2>终端</h2></header>
-        <div id="terminal" class="card-list empty">未识别到终端上下文</div>
+              <header class="panel-head"><h2>浏览器 Tab</h2></header>
+              <div id="browser" class="card-list empty">等待浏览器扩展连接</div>
 
-        <header class="panel-head panel-head-spaced"><h2>文件管理器</h2></header>
-        <div id="files" class="card-list empty">未识别到文件管理器状态</div>
-      </section>
+              <header class="panel-head panel-head-spaced"><h2>终端</h2></header>
+              <div id="terminal" class="card-list empty">未识别到终端上下文</div>
 
-      <section class="panel">
-        <header class="panel-head"><h2>活动</h2></header>
-        <div id="activity" class="metric-row"></div>
+              <header class="panel-head panel-head-spaced"><h2>文件管理器</h2></header>
+              <div id="files" class="card-list empty">未识别到文件管理器状态</div>
+            </section>
 
-        <header class="panel-head panel-head-spaced">
-          <h2>截图</h2>
-          <span id="captureBadge" class="chip chip-muted">未启用</span>
-        </header>
-        <figure class="screenshot-frame" id="screenshotFrame">
-          <img id="screenshot" alt="latest focused window screenshot" />
-          <figcaption id="screenshotHint" class="muted">开启截图后此处会显示最新窗口截图，双击可放大</figcaption>
-        </figure>
-      </section>
-    </main>
+            <section class="panel">
+              <header class="panel-head"><h2>活动</h2></header>
+              <div id="activity" class="metric-row"></div>
+
+              <header class="panel-head panel-head-spaced">
+                <h2>截图</h2>
+                <span id="captureBadge" class="chip chip-muted">未启用</span>
+              </header>
+              <figure class="screenshot-frame" id="screenshotFrame">
+                <img id="screenshot" alt="latest focused window screenshot" />
+                <figcaption id="screenshotHint" class="muted">开启截图后此处会显示最新窗口截图，双击可放大</figcaption>
+              </figure>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-diagnostics" class="view">
+          <div class="diagnostics-layout">
+            <section class="panel">
+              <header class="panel-head"><h2>连接</h2></header>
+              <div id="diagConnection" class="grid"></div>
+            </section>
+            <section class="panel">
+              <header class="panel-head"><h2>能力状态</h2></header>
+              <div id="diagCapabilities" class="card-list"></div>
+            </section>
+            <section class="panel">
+              <header class="panel-head"><h2>当前错误 / 提示</h2></header>
+              <div id="diagErrors" class="card-list empty">暂无错误</div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
 
     <div id="lightbox" class="lightbox" hidden>
       <button class="lightbox-close" aria-label="关闭">×</button>

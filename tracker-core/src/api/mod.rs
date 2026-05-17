@@ -1,4 +1,4 @@
-use crate::models::{BrowserTab, TrackerEvent};
+use crate::models::{now_ts, BrowserTab, TrackerEvent};
 use crate::state::TrackerState;
 use anyhow::{anyhow, Context};
 use async_stream::stream;
@@ -255,6 +255,7 @@ struct TabUpdate {
 impl TabUpdate {
     fn into_tab(self) -> BrowserTab {
         BrowserTab {
+            updated_at: now_ts(),
             browser: self.browser.unwrap_or_else(|| "chrome".to_string()),
             pid: self.pid,
             window_id: self.window_id,

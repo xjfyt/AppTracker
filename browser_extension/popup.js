@@ -1,4 +1,36 @@
 const DEFAULT_API = "http://127.0.0.1:5007";
+const FALLBACK_PORT_START = 5007;
+const FALLBACK_PORT_END = 5012;
+
+function candidateApiBases(preferred) {
+  const bases = new Set();
+  const normalized = (preferred || DEFAULT_API).replace(/\/$/, "");
+  bases.add(normalized);
+  try {
+    const url = new URL(normalized);
+    if (["127.0.0.1", "localhost"].includes(url.hostname)) {
+      for (let port = FALLBACK_PORT_START; port <= FALLBACK_PORT_END; port++) {
+        url.port = String(port);
+        bases.add(url.toString().replace(/\/$/, ""));
+      }
+    }
+  } catch (e) {
+    for (let port = FALLBACK_PORT_START; port <= FALLBACK_PORT_END; port++) {
+      bases.add(`http://127.0.0.1:${port}`);
+    }
+  }
+  return Array.from(bases);
+}
+
+async function fetchWithTimeout(url, ms = 700) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function refresh() {
   const s = await chrome.storage.local.get(["token", "paused", "apiBase"]);
@@ -22,7 +54,7 @@ async function refresh() {
       text.textContent = "Token missing — click Sync";
     } else if (resp.connected) {
       dot.className = "dot ok";
-      text.textContent = "Connected";
+      text.textContent = `Connected: ${resp.apiBase || ""}`;
     } else {
       dot.className = "dot err";
       text.textContent = "Disconnected — is AppTracker running?";
@@ -33,13 +65,18 @@ async function refresh() {
 async function syncToken() {
   const api = (document.getElementById("api").value.trim() || DEFAULT_API).replace(/\/$/, "");
   try {
-    const res = await fetch(`${api}/api/v1/bridge_token`);
-    if (!res.ok) throw new Error(`status ${res.status}`);
-    const data = await res.json();
-    if (!data || !data.token) throw new Error("no token in response");
-    await chrome.storage.local.set({ token: data.token, apiBase: api });
-    document.getElementById("token").value = data.token;
-    refresh();
+    for (const base of candidateApiBases(api)) {
+      const res = await fetchWithTimeout(`${base}/api/v1/bridge_token`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!data || !data.token) continue;
+      await chrome.storage.local.set({ token: data.token, apiBase: base });
+      document.getElementById("token").value = data.token;
+      document.getElementById("api").value = base;
+      refresh();
+      return;
+    }
+    throw new Error("no AppTracker token endpoint found");
   } catch (e) {
     document.getElementById("status-text").textContent = `Sync failed: ${e.message}`;
     document.getElementById("dot").className = "dot err";

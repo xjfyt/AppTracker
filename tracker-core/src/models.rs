@@ -57,6 +57,8 @@ pub struct ProcessInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BrowserTab {
+    #[serde(default = "now_ts")]
+    pub updated_at: f64,
     pub browser: String,
     pub pid: Option<u32>,
     pub window_id: Option<i64>,

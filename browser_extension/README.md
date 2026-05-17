@@ -10,7 +10,7 @@ ws://127.0.0.1:5007/api/v1/browser
 
 ## 二、安装方法
 
-启动 AppTracker 桌面端（任何方式都可以，比如 `npm run dev` 或打包后的 .exe），它会在 `~/.apptracker/token` 自动生成鉴权 token，端口 5007 同时承载浏览器扩展的 WebSocket。
+启动 AppTracker 桌面端（任何方式都可以，比如 `npm run dev` 或打包后的 .exe），它会在 `~/.apptracker/token` 自动生成鉴权 token，默认端口 5007 同时承载浏览器扩展的 WebSocket。如果 5007 被占用，扩展会自动探测 5008-5012。
 
 ### 1、Chrome / Edge / Brave / Arc
 

@@ -1,6 +1,6 @@
 # 本地 API
 
-AppTracker 只对外暴露 **一个端口**（默认 `127.0.0.1:5007`，被占用时向后顺延 5 个端口）。HTTP / WebSocket / SSE 全部走这里。
+AppTracker 只对外暴露 **一个端口**（默认 `127.0.0.1:5007`，被占用时向后顺延到 `5008`-`5012`）。HTTP / WebSocket / SSE 全部走这里；桌面 UI 和浏览器扩展会自动探测这一段端口。
 
 ## REST
 
@@ -63,7 +63,7 @@ POST 体一律是单字段 JSON：`{"paused": bool}` / `{"enabled": bool}`。
 
 - 路径：`/api/v1/browser`
 - 第一帧必须发 `{"token": "<bridge_token>"}`，token 来自 `~/.apptracker/token` 或 `GET /api/v1/bridge_token`。
-- 后续帧：`{"type": "tab_update", "browser": "...", "url": "...", "title": "...", ...}`，由 `state.update_browser_tab` 触发 `browser_tab_updated`。
+- 后续帧：`{"type": "tab_update", "browser": "...", "url": "...", "title": "...", ...}`，由 `state.update_browser_tab` 触发 `browser_tab_updated`。服务端会为 `BrowserTab` 补 `updated_at` 时间戳，UI 用它判断当前 Tab 信息是否已经变旧。
 
 ## SSE
 

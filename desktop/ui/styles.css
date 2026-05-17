@@ -161,12 +161,55 @@ button, input { font: inherit; }
 .switch.tiny input:checked + .track .thumb { transform: translateX(14px); }
 .switch.tiny .switch-label { font-size: 12px; }
 
+.app-shell {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 0;
+}
+
+.side-tabs {
+  min-height: calc(100vh - 65px);
+  padding: 14px 10px;
+  border-right: 1px solid var(--border);
+  background: #f8fafc;
+}
+.side-tab {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 10px;
+  margin-bottom: 6px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+.side-tab:hover { background: #eef2f7; }
+.side-tab.active {
+  background: var(--accent-soft);
+  color: #1e3a8a;
+  font-weight: 600;
+}
+
+.view-stack { min-width: 0; }
+.view { display: none; }
+.view.active { display: block; }
+
 .layout {
   display: grid;
   grid-template-columns: minmax(420px, 1.25fr) minmax(320px, 0.9fr) minmax(300px, 0.8fr);
   gap: 14px;
   padding: 14px;
 }
+
+.diagnostics-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
+  gap: 14px;
+  padding: 14px;
+}
+.diagnostics-layout .panel:last-child { grid-column: 1 / -1; }
 
 .panel {
   background: var(--bg-card);
@@ -285,7 +328,22 @@ button, input { font: inherit; }
 }
 
 @media (max-width: 980px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .side-tabs {
+    display: flex;
+    gap: 8px;
+    min-height: auto;
+    padding: 10px 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .side-tab {
+    width: auto;
+    margin-bottom: 0;
+    text-align: center;
+  }
   .layout { grid-template-columns: 1fr; }
+  .diagnostics-layout { grid-template-columns: 1fr; }
   .topbar { flex-wrap: wrap; }
   .toolbar { flex-wrap: wrap; }
 }

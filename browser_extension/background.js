@@ -2,23 +2,80 @@
 // Same code works on Chrome / Edge / Brave / Arc / Firefox MV3.
 
 const DEFAULT_API_BASE = "http://127.0.0.1:5007";
+const FALLBACK_PORT_START = 5007;
+const FALLBACK_PORT_END = 5012;
 let apiBase = DEFAULT_API_BASE;
 let ws = null;
 let token = null;
 let reconnectDelay = 1000;
 let pausedByUser = false;
+let connectGeneration = 0;
 
 function wsUrl() {
   return apiBase.replace(/^http/i, "ws").replace(/\/$/, "") + "/api/v1/browser";
 }
 
-async function fetchTokenFromHost() {
+function candidateApiBases(preferred = apiBase) {
+  const bases = new Set();
+  const normalized = (preferred || DEFAULT_API_BASE).replace(/\/$/, "");
+  bases.add(normalized);
   try {
-    const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/v1/bridge_token`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data && typeof data.token === "string" && data.token) return data.token;
-  } catch (e) {}
+    const url = new URL(normalized);
+    if (["127.0.0.1", "localhost"].includes(url.hostname)) {
+      for (let port = FALLBACK_PORT_START; port <= FALLBACK_PORT_END; port++) {
+        url.port = String(port);
+        bases.add(url.toString().replace(/\/$/, ""));
+      }
+    }
+  } catch (e) {
+    for (let port = FALLBACK_PORT_START; port <= FALLBACK_PORT_END; port++) {
+      bases.add(`http://127.0.0.1:${port}`);
+    }
+  }
+  return Array.from(bases);
+}
+
+async function fetchWithTimeout(url, ms = 700) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function discoverApiBase() {
+  for (const base of candidateApiBases()) {
+    try {
+      const res = await fetchWithTimeout(`${base}/api/v1/health`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && data.service === "apptracker") {
+        if (base !== apiBase) {
+          apiBase = base;
+          await chrome.storage.local.set({ apiBase });
+        }
+        return base;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+async function fetchTokenFromHost() {
+  for (const base of candidateApiBases()) {
+    try {
+      const res = await fetchWithTimeout(`${base}/api/v1/bridge_token`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && typeof data.token === "string" && data.token) {
+        apiBase = base;
+        await chrome.storage.local.set({ apiBase });
+        return data.token;
+      }
+    } catch (e) {}
+  }
   return null;
 }
 
@@ -57,11 +114,14 @@ function setBadge(state) {
   } catch (e) {}
 }
 
-function connect() {
+async function connect() {
+  const generation = ++connectGeneration;
   if (pausedByUser) {
     setBadge("off");
     return;
   }
+  await discoverApiBase();
+  if (generation !== connectGeneration) return;
   if (!token) {
     setBadge("err");
     console.warn("[AppTracker] No token yet. Will retry — start AppTracker, the token auto-syncs.");
@@ -74,6 +134,12 @@ function connect() {
     });
     scheduleReconnect();
     return;
+  }
+  if (ws) {
+    try {
+      ws.close();
+    } catch (e) {}
+    ws = null;
   }
   try {
     ws = new WebSocket(wsUrl());
@@ -158,6 +224,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       connected: ws && ws.readyState === WebSocket.OPEN,
       paused: pausedByUser,
       hasToken: !!token,
+      apiBase,
     });
   }
   return true;
