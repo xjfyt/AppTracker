@@ -22,7 +22,12 @@ if (-not (Test-Path $PROFILE)) {
 $escapedPowerShellHook = $powerShellHook.Replace("'", "''")
 $profileLine = ". '$escapedPowerShellHook'"
 $profileText = Get-Content -Path $PROFILE -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
-if ($profileText -notlike "*$powerShellHook*") {
+# Get-Content -Raw on an empty file returns $null, and `$null -like "*X*"`
+# evaluates to $null (NOT $false), which makes `-notlike` also $null and the
+# whole `if` falsy -- so an empty profile would silently report "already
+# installed" without ever writing the source line. Coerce to string first.
+if (-not $profileText) { $profileText = "" }
+if ($profileText.IndexOf($powerShellHook, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
     Add-Content -Path $PROFILE -Encoding UTF8 -Value ""
     Add-Content -Path $PROFILE -Encoding UTF8 -Value "# Active Tracker shell integration"
     Add-Content -Path $PROFILE -Encoding UTF8 -Value $profileLine
