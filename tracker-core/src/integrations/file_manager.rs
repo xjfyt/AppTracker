@@ -22,6 +22,9 @@ pub async fn query(info: &WindowInfo) -> Option<FileManagerState> {
 }
 
 #[cfg(target_os = "windows")]
+const WINDOWS_EXPLORER_SELECTION_CAP: usize = 50;
+
+#[cfg(target_os = "windows")]
 async fn windows_explorer(info: &WindowInfo) -> Option<FileManagerState> {
     let class = info.window_class.as_deref().unwrap_or_default();
     let exe = info
@@ -38,6 +41,11 @@ async fn windows_explorer(info: &WindowInfo) -> Option<FileManagerState> {
         .as_deref()
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or_default();
+    // Win11 同窗口多 TAB 共享 HWND，光看 HWND 没法分辨真正激活的 TAB。
+    // 把前台窗口标题（通常就是激活 TAB 的文件夹叶子名）传给 PS，
+    // PS 端按"folder leaf == title leaf"在同 HWND 下挑一个 TAB 标 W*。
+    let active_title_escaped = info.window_title.replace('\'', "''");
+    let cap = WINDOWS_EXPLORER_SELECTION_CAP;
     tokio::task::spawn_blocking(move || {
         let script = format!(
             r#"
@@ -46,7 +54,21 @@ $utf8 = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
 $active = {active_hwnd}
+$activeTitle = '{active_title_escaped}'
+$cap = {cap}
+
+# 截取标题左侧到第一个分隔符（' - ', ' | ', '–', '—'）之前作为
+# 激活 TAB 的"叶子名"。Win11 Explorer 默认标题是裸文件夹名，但配合
+# 一些工具会出现 "node_modules - 文件资源管理器" 之类。
+$titleLeaf = $activeTitle
+foreach ($sep in @(' - ', ' | ', ' – ', ' — ')) {{
+  $idx = $titleLeaf.IndexOf($sep)
+  if ($idx -gt 0) {{ $titleLeaf = $titleLeaf.Substring(0, $idx) }}
+}}
+$titleLeaf = $titleLeaf.Trim()
+
 $shell = New-Object -ComObject Shell.Application
+$entries = New-Object 'System.Collections.Generic.List[object]'
 foreach ($w in $shell.Windows()) {{
   try {{
     if (-not ($w.FullName -like '*explorer.exe')) {{ continue }}
@@ -55,18 +77,52 @@ foreach ($w in $shell.Windows()) {{
     if (-not $url.StartsWith('file:')) {{ continue }}
     $uri = [System.Uri]$url
     $folder = [System.Uri]::UnescapeDataString($uri.LocalPath)
-    $flag = if ($hwnd -eq $active) {{ 'W*' }} else {{ 'W' }}
-    Write-Output "$flag|$hwnd|$folder"
-    try {{
-      foreach ($item in $w.Document.SelectedItems()) {{
-        if ($item.Path) {{ Write-Output "S|$hwnd|$($item.Path)" }}
-      }}
-    }} catch {{}}
+    $entries.Add([pscustomobject]@{{ Hwnd = $hwnd; Folder = $folder; W = $w }})
+  }} catch {{}}
+}}
+
+# 在共享 HWND=$active 的多个 TAB 里挑唯一的"真激活"：
+#   1) folder leaf 与标题 leaf 全等
+#   2) 否则取第一个
+$activeIdx = -1
+$candidates = @()
+for ($i = 0; $i -lt $entries.Count; $i++) {{
+  if ($entries[$i].Hwnd -eq $active) {{ $candidates += $i }}
+}}
+if ($candidates.Count -gt 0) {{
+  if ($titleLeaf) {{
+    foreach ($i in $candidates) {{
+      $leaf = Split-Path -Leaf $entries[$i].Folder
+      if ($leaf -and ($leaf -eq $titleLeaf)) {{ $activeIdx = $i; break }}
+    }}
+  }}
+  if ($activeIdx -lt 0) {{ $activeIdx = $candidates[0] }}
+}}
+
+for ($i = 0; $i -lt $entries.Count; $i++) {{
+  $e = $entries[$i]
+  $flag = if ($i -eq $activeIdx) {{ 'W*' }} else {{ 'W' }}
+  Write-Output "$flag|$($e.Hwnd)|$($e.Folder)"
+  try {{
+    $sel = $e.W.Document.SelectedItems()
+    $total = 0
+    try {{ $total = [int]$sel.Count }} catch {{ $total = 0 }}
+    $emitted = 0
+    foreach ($item in $sel) {{
+      if ($emitted -ge $cap) {{ break }}
+      try {{
+        $p = $item.Path
+        if ($p) {{ Write-Output "S|$($e.Hwnd)|$p"; $emitted++ }}
+      }} catch {{}}
+    }}
+    if ($total -gt $emitted) {{
+      Write-Output "T|$($e.Hwnd)|$total|$emitted"
+    }}
   }} catch {{}}
 }}
 "#
         );
-        let text = run_powershell_utf8(&script, Duration::from_millis(1500))?;
+        let text = run_powershell_utf8(&script, Duration::from_millis(2500))?;
         parse_windows_explorer(&text)
     })
     .await
@@ -76,6 +132,11 @@ foreach ($w in $shell.Windows()) {{
 
 #[cfg(target_os = "windows")]
 fn run_powershell_utf8(script: &str, timeout: Duration) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW = 0x08000000. Release 走 GUI subsystem，没有父控制台，
+    // 默认会给子进程分配一个新黑框；前台窗口每变一次都要 spawn 一次 PowerShell，
+    // 不加这个 flag 就会出现"切应用就闪终端"的现象。
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut child = Command::new("powershell.exe")
         .args([
             "-NoLogo",
@@ -85,6 +146,7 @@ fn run_powershell_utf8(script: &str, timeout: Duration) -> Option<String> {
             "-Command",
             script,
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -150,11 +212,14 @@ fn parse_windows_explorer(text: &str) -> Option<FileManagerState> {
                 hwnd_or_id: Some(hwnd),
                 is_active: active,
             });
-        } else if line.starts_with("S|") {
-            let mut parts = line.splitn(3, '|');
-            let _ = parts.next();
+        } else if let Some(rest) = line.strip_prefix("S|") {
+            // S|<hwnd>|<path>
+            let mut parts = rest.splitn(2, '|');
             let hwnd = parts.next().unwrap_or_default();
             let selected = parts.next().unwrap_or_default().to_string();
+            if selected.is_empty() {
+                continue;
+            }
             if let Some(window) = windows
                 .iter_mut()
                 .find(|w| w.hwnd_or_id.as_deref() == Some(hwnd))
@@ -162,6 +227,9 @@ fn parse_windows_explorer(text: &str) -> Option<FileManagerState> {
                 window.selected_items.push(selected);
             }
         }
+        // 其它 sentinel（如 T|hwnd|total|emitted）忽略：UI 当前不展示截断标记，
+        // 选中项已自然停在 cap 以内。这里只是为了将来想透出"已截断"提示时
+        // 不用再改 PS 端。
     }
     if windows.is_empty() {
         None

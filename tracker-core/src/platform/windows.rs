@@ -291,6 +291,11 @@ fn parse_document_lines(text: &str, confidence: f32) -> Vec<DocumentSource> {
 }
 
 fn run_powershell_utf8(script: &str, timeout: Duration) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW = 0x08000000. Release 走 GUI subsystem，没有父控制台，
+    // 默认会给子进程分配一个新黑框；office_documents / uia_documents 在每次
+    // 前台窗口切换时都会被调用，不加这个 flag 就会出现"切应用就闪终端"的现象。
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut child = Command::new("powershell.exe")
         .args([
             "-NoLogo",
@@ -300,6 +305,7 @@ fn run_powershell_utf8(script: &str, timeout: Duration) -> Option<String> {
             "-Command",
             script,
         ])
+        .creation_flags(CREATE_NO_WINDOW)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
