@@ -57,16 +57,6 @@ $active = {active_hwnd}
 $activeTitle = '{active_title_escaped}'
 $cap = {cap}
 
-# 截取标题左侧到第一个分隔符（' - ', ' | ', '–', '—'）之前作为
-# 激活 TAB 的"叶子名"。Win11 Explorer 默认标题是裸文件夹名，但配合
-# 一些工具会出现 "node_modules - 文件资源管理器" 之类。
-$titleLeaf = $activeTitle
-foreach ($sep in @(' - ', ' | ', ' – ', ' — ')) {{
-  $idx = $titleLeaf.IndexOf($sep)
-  if ($idx -gt 0) {{ $titleLeaf = $titleLeaf.Substring(0, $idx) }}
-}}
-$titleLeaf = $titleLeaf.Trim()
-
 $shell = New-Object -ComObject Shell.Application
 $entries = New-Object 'System.Collections.Generic.List[object]'
 foreach ($w in $shell.Windows()) {{
@@ -81,20 +71,30 @@ foreach ($w in $shell.Windows()) {{
   }} catch {{}}
 }}
 
-# 在共享 HWND=$active 的多个 TAB 里挑唯一的"真激活"：
-#   1) folder leaf 与标题 leaf 全等
-#   2) 否则取第一个
+# 在共享 HWND=$active 的多个 TAB 里挑唯一的"真激活"。
+# Win11 Explorer 多 TAB 时窗口标题是：
+#   "<激活 TAB 名> 和 N 个其他选项卡 - 文件资源管理器"
+# 单 TAB 时则是裸 "<文件夹名>" 或 "<文件夹名> - 文件资源管理器"。
+# 所以"标题以哪个 TAB 的 folder leaf 开头"是最稳的判断 —— 不是 equals。
+# 取 StartsWith 中最长的那个 leaf（避免 "图" 错抢 "图片"）。
 $activeIdx = -1
 $candidates = @()
 for ($i = 0; $i -lt $entries.Count; $i++) {{
   if ($entries[$i].Hwnd -eq $active) {{ $candidates += $i }}
 }}
 if ($candidates.Count -gt 0) {{
-  if ($titleLeaf) {{
+  if ($activeTitle) {{
+    $bestIdx = -1
+    $bestLen = 0
     foreach ($i in $candidates) {{
       $leaf = Split-Path -Leaf $entries[$i].Folder
-      if ($leaf -and ($leaf -eq $titleLeaf)) {{ $activeIdx = $i; break }}
+      if (-not $leaf) {{ continue }}
+      if ($activeTitle.StartsWith($leaf) -and $leaf.Length -gt $bestLen) {{
+        $bestIdx = $i
+        $bestLen = $leaf.Length
+      }}
     }}
+    if ($bestIdx -ge 0) {{ $activeIdx = $bestIdx }}
   }}
   if ($activeIdx -lt 0) {{ $activeIdx = $candidates[0] }}
 }}
