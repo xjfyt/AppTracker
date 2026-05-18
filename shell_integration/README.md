@@ -115,9 +115,42 @@ type "%USERPROFILE%\.active_tracker\shells\%ACTIVE_TRACKER_CMD_PID%.cwd"
 
 ## 四、卸载方法
 
-删除 shell 配置文件中 `source .../shell_integration/...`、PowerShell profile 中对应的 `. '...\powershell.ps1'` 行，或 CMD 的 `HKCU\Software\Microsoft\Command Processor\AutoRun` 中对应的 `cmd.cmd` 调用，然后重启终端。
+### 1、Windows 一键卸载
 
-如需清理缓存文件：
+```text
+shell_integration/uninstall_windows.cmd
+```
+
+该脚本会同时：
+
+- 删除 `$PROFILE` 里所有 `. '...\powershell.ps1'` 行（按文件名匹配，不依赖原安装路径）；
+- 从 `HKCU\Software\Microsoft\Command Processor\AutoRun` 里抠掉 `cmd.cmd` 调用，其余 AutoRun 段保留；
+- 清空 `%USERPROFILE%\.active_tracker\shells\` 缓存。
+
+完成后重启 PowerShell / CMD / Windows Terminal 让旧会话里的内存钩子也释放。
+
+也可以在 PowerShell 中直接执行：
+
+```powershell
+.\shell_integration\uninstall_windows.ps1
+```
+
+### 2、bash / zsh / fish 一键卸载
+
+```bash
+bash shell_integration/uninstall_unix.sh
+```
+
+该脚本会从 `~/.bashrc`、`~/.bash_profile`、`~/.zshrc`、`~/.config/fish/config.fish` 中删除 `source .../shell_integration/...` 行，并清空 `~/.active_tracker/shells/`。完成后 `exec $SHELL` 即可。
+
+### 3、手动卸载
+
+如果不放心自动脚本：
+
+- 删除 shell 配置文件中 `source .../shell_integration/...` 行；
+- PowerShell profile 中对应的 `. '...\powershell.ps1'` 行；
+- CMD 的 `HKCU\Software\Microsoft\Command Processor\AutoRun` 里 `cmd.cmd` 调用片段；
+- 清空缓存：
 
 ```bash
 rm -rf ~/.active_tracker/shells

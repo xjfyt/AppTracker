@@ -1,15 +1,29 @@
-# Active Tracker PowerShell shell integration.
+# Active Tracker PowerShell shell integration. ASCII-only on purpose:
+# Windows PowerShell 5.1 reads .ps1 files as the OEM codepage unless they
+# have a UTF-8 BOM, so non-ASCII comments get mangled on zh-CN systems and
+# can corrupt the script. PowerShell 7 reads UTF-8 by default and is fine.
+# Keeping ASCII keeps both happy.
 #
-# 在 PowerShell profile (`$PROFILE`) 末尾追加：
+# Append to your PowerShell profile ($PROFILE):
 #   . 'C:\path\to\active_tracker\shell_integration\powershell.ps1'
 #
-# 写入两个文件：
-#   ~/.active_tracker/shells/<PID>.cwd  当前工作目录
-#   ~/.active_tracker/shells/<PID>.cmd  最近一次命令
+# Writes:
+#   ~/.active_tracker/shells/<PID>.cwd  current working dir
+#   ~/.active_tracker/shells/<PID>.cmd  last command line
 #
-# cd 触发：用 $ExecutionContext.InvokeCommand.LocationChangedAction，
-# Set-Location 后必定回调，不受 oh-my-posh / starship / 自定义 prompt
-# 覆盖影响（旧版只 hook prompt，加载顺序在前就会被后面的 prompt 覆盖掉）。
+# How the hook stays alive:
+#   1) Function proxies for Set-Location / Push-Location / Pop-Location.
+#      `cd` is an alias to Set-Location, so this catches every cd call.
+#      Function lookup beats cmdlet lookup, so we run first and forward
+#      to Microsoft.PowerShell.Management\Set-Location with the full
+#      module-qualified name (bypasses our own proxy).
+#   2) prompt() override that chains the prior prompt. Catches .cmd
+#      (last command) for shells that don't go through Set-Location.
+#
+# Why proxies, not LocationChangedAction:
+#   $ExecutionContext.InvokeCommand.LocationChangedAction is a single slot.
+#   starship, oh-my-posh, posh-git etc. can stomp it without chaining.
+#   Function proxies survive prompt-framework re-init.
 
 $ActiveTrackerDir = Join-Path $HOME ".active_tracker\shells"
 $ActiveTrackerUtf8 = [System.Text.UTF8Encoding]::new($false)
@@ -19,30 +33,47 @@ if (-not (Test-Path $ActiveTrackerDir)) {
 }
 
 function global:_ActiveTrackerWriteState {
-    $cwdFile = Join-Path $ActiveTrackerDir "$PID.cwd"
-    $cmdFile = Join-Path $ActiveTrackerDir "$PID.cmd"
+    $dir = Join-Path $HOME ".active_tracker\shells"
+    $cwdFile = Join-Path $dir "$PID.cwd"
+    $cmdFile = Join-Path $dir "$PID.cmd"
+    $enc = [System.Text.UTF8Encoding]::new($false)
     try {
-        [System.IO.File]::WriteAllText($cwdFile, "$($PWD.Path)`n", $ActiveTrackerUtf8)
+        [System.IO.File]::WriteAllText($cwdFile, "$($PWD.Path)`n", $enc)
         $last = Get-History -Count 1 -ErrorAction SilentlyContinue
         if ($last) {
-            [System.IO.File]::WriteAllText($cmdFile, "$($last.CommandLine)`n", $ActiveTrackerUtf8)
+            [System.IO.File]::WriteAllText($cmdFile, "$($last.CommandLine)`n", $enc)
         }
     } catch {}
 }
 
-# 启动时先写一次，保证初始 cwd 立刻可读。
+# Write once at source-time so the agent's first read finds a current value.
 _ActiveTrackerWriteState
 
-# cd / Set-Location / Push-Location / Pop-Location 之后必触发，
-# 与 prompt 函数无关。即便 starship / oh-my-posh 完全接管 prompt，cwd 文件
-# 依旧会被刷新。
-$ExecutionContext.InvokeCommand.LocationChangedAction = {
+# --- Set-Location / Push-Location / Pop-Location proxies ---
+# `cd` is an alias to Set-Location. PowerShell command resolution order is
+# alias -> function -> cmdlet, so defining a function named Set-Location
+# wins over the built-in cmdlet. We forward via the module-qualified name
+# `Microsoft.PowerShell.Management\Set-Location` to bypass our own proxy.
+
+function global:Set-Location {
+    Microsoft.PowerShell.Management\Set-Location @args
     _ActiveTrackerWriteState
 }
 
-# 仍然兜底 hook 一次 prompt：LocationChangedAction 在 Set-Location 时才触发，
-# 用户敲完非 cd 命令时也希望刷新 .cmd（最近命令）。如果 prompt 被覆盖
-# 也无所谓 —— LocationChangedAction 已经能保证 .cwd 准确。
+function global:Push-Location {
+    Microsoft.PowerShell.Management\Push-Location @args
+    _ActiveTrackerWriteState
+}
+
+function global:Pop-Location {
+    Microsoft.PowerShell.Management\Pop-Location @args
+    _ActiveTrackerWriteState
+}
+
+# --- prompt chain ---
+# Save the original prompt once (don't overwrite if we are reloaded by a
+# second `. $PROFILE` -- the saved one would then be our own function and
+# we'd recurse).
 if (-not (Test-Path Function:\_ActiveTrackerOriginalPrompt)) {
     $global:_ActiveTrackerOriginalPrompt = $function:prompt
 }
@@ -52,7 +83,7 @@ function global:prompt {
 }
 
 $null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -SupportEvent -Action {
-    Remove-Item -Path (Join-Path $ActiveTrackerDir "$PID.cwd") -ErrorAction SilentlyContinue
-    Remove-Item -Path (Join-Path $ActiveTrackerDir "$PID.cmd") -ErrorAction SilentlyContinue
+    $dir = Join-Path $HOME ".active_tracker\shells"
+    Remove-Item -Path (Join-Path $dir "$PID.cwd") -ErrorAction SilentlyContinue
+    Remove-Item -Path (Join-Path $dir "$PID.cmd") -ErrorAction SilentlyContinue
 }
-
